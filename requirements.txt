@@ -1,0 +1,22 @@
+annotated-types @ file:///home/conda/feedstock_root/build_artifacts/annotated-types_1696634205638/work
+anyio @ file:///home/conda/feedstock_root/build_artifacts/anyio_1708355285029/work
+click @ file:///home/conda/feedstock_root/build_artifacts/click_1692311806742/work
+exceptiongroup @ file:///home/conda/feedstock_root/build_artifacts/exceptiongroup_1704921103267/work
+fastapi @ file:///home/conda/feedstock_root/build_artifacts/fastapi_1712541010133/work
+greenlet @ file:///home/conda/feedstock_root/build_artifacts/greenlet_1703201576006/work
+h11 @ file:///home/conda/feedstock_root/build_artifacts/h11_1664132893548/work
+httptools==0.6.1
+idna @ file:///home/conda/feedstock_root/build_artifacts/idna_1713279365350/work
+psycopg2 @ file:///home/conda/feedstock_root/build_artifacts/psycopg2-split_1701737488821/work
+psycopg2-binary @ file:///home/conda/feedstock_root/build_artifacts/psycopg2-split_1701737547976/work/psycopg2-binary
+pydantic @ file:///home/conda/feedstock_root/build_artifacts/pydantic_1712899199321/work
+pydantic-settings @ file:///home/conda/feedstock_root/build_artifacts/pydantic-settings_1708377041016/work
+pydantic_core @ file:///home/conda/feedstock_root/build_artifacts/pydantic-core_1712848713126/work
+python-dotenv @ file:///home/conda/feedstock_root/build_artifacts/python-dotenv-split_1706018097647/work
+sniffio @ file:///home/conda/feedstock_root/build_artifacts/sniffio_1708952932303/work
+SQLAlchemy @ file:///home/conda/feedstock_root/build_artifacts/sqlalchemy_1711289771385/work
+sqlmodel @ file:///home/conda/feedstock_root/build_artifacts/sqlmodel_1701728502281/work
+starlette @ file:///home/conda/feedstock_root/build_artifacts/starlette-recipe_1709667058396/work
+typing_extensions @ file:///home/conda/feedstock_root/build_artifacts/typing_extensions_1712329955671/work
+uvicorn @ file:///home/conda/feedstock_root/build_artifacts/uvicorn-split_1710932021389/work
+uvloop==0.19.0

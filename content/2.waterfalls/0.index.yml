@@ -1,0 +1,18 @@
+title: Waterfalls
+description: A spectral data playground
+
+navigation: false
+hero:
+  title: EPIC Waterfalls
+  description: A spectral data playground
+  icon: i-material-symbols-waterfall-chart
+cards:
+  - title: Spectrograms @LWA-SV
+    description: Explore the live and archival spectrograms of transient sources.
+    to: /waterfalls/spectrograms/lwasv
+    #target: _self
+
+  - title: PRESTO @LWA-SV
+    description: Analyse the data to detect pulsars using the PRESTO software.
+    to: /waterfalls/presto
+    #target: _self
