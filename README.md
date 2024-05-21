@@ -1,6 +1,8 @@
-# Nuxt 3 Minimal Starter
+# EPIC Waterfalls
 
-Look at the [Nuxt 3 documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+This project contains the source code for the EPIC Astronomy website and the Waterfalls application. See [http://epic-astronomy.org](http://epic-astronomy.org) for more details.
+
+The frontend is built with the NuxtJS framework and utlilizes Nuxt UI Pro and custom built vue components. The backend is powered by FastAPI and SQLModel to fetch all spectrogram related data from EPIC's Postgres database located at the Long Wavelength Array in Seveilleta, New Mexico.
 
 ## Setup
 
@@ -10,14 +12,7 @@ Make sure to install the dependencies:
 # npm
 npm install
 
-# pnpm
-pnpm install
-
-# yarn
-yarn install
-
-# bun
-bun install
+pip install requirements.txt
 ```
 
 ## Development Server
@@ -25,51 +20,24 @@ bun install
 Start the development server on `http://localhost:3000`:
 
 ```bash
-# npm
-npm run dev
-
-# pnpm
-pnpm run dev
-
-# yarn
-yarn dev
-
-# bun
-bun run dev
+# Frontend
+npm run dev --port=3000 --host=127.0.0.1
 ```
+
+```bash
+# backend
+# configure the .env file. See .env.example for the required environment variables.
+cd backend;
+uvicorn app.main:app --env-file=../../.env --host=127.0.0.1
+```
+
+
 
 ## Production
 
 Build the application for production:
 
 ```bash
-# npm
 npm run build
-
-# pnpm
-pnpm run build
-
-# yarn
-yarn build
-
-# bun
-bun run build
+npm run ./output/server/index.mjs
 ```
-
-Locally preview production build:
-
-```bash
-# npm
-npm run preview
-
-# pnpm
-pnpm run preview
-
-# yarn
-yarn preview
-
-# bun
-bun run preview
-```
-
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
