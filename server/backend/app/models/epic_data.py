@@ -12,7 +12,7 @@ import sqlalchemy
 from sqlalchemy import Column
 from sqlalchemy.schema import CreateSchema
 import re
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import TypeDecorator,DateTime
 from sqlalchemy import types, create_engine, Column, Integer
 from app.core.config import settings
 
@@ -84,8 +84,8 @@ class XMLType(sqlalchemy.types.UserDefinedType):  # type: ignore [type-arg]
 
 class epic_img_metadata_base(SQLModel):
     metadata = _metadata
-
-    session_id: UUID | None
+    __tablename__ = "epic_img_metadata2"
+    session_id: UUID | None = Field(primary_key=True)
     chan0: int | None
     n_chan: int | None
     n_pol: int | None
@@ -94,17 +94,18 @@ class epic_img_metadata_base(SQLModel):
 
 
 class epic_img_metadata(epic_img_metadata_base, table=True):
-    id: UUID = Field(primary_key=True)
-    img_time: datetime
+    session_id: UUID = Field(primary_key=True)
+    session_start: datetime = Field(sa_column=Column(DateTime(timezone=False), nullable=False))
+    session_end: datetime = Field(sa_column=Column(DateTime(timezone=False), nullable=False))
     epic_version: str
     img_size: tuple[int, int] = Field(sa_column=Column(PointType))
     npix_kernel: int
-    source_names: List[str] | None = Field(sa_column=Column(ARRAY(Text)))
+    source_name: str | None #= Field(sa_column=Column(ARRAY(Text)))
 
 
 class obs_period(SQLModel):
-    start_time: datetime
-    end_time: datetime
+    start_time: datetime = Field(sa_column=Column(DateTime(timezone=False), nullable=False))
+    end_time: datetime = Field(sa_column=Column(DateTime(timezone=False), nullable=False))
 
 
 class epic_obs_period(obs_period):
@@ -126,6 +127,7 @@ class epic_pixels_base(SQLModel):
     pixel_values: bytes = Field(sa_column=Column(BYTEA))
 
 class epic_pixels(epic_pixels_base, table=True):
+    __tablename__ = "epic_pixels2"
     metadata = _metadata
 
     # img_time: datetime

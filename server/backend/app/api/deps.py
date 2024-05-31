@@ -55,7 +55,7 @@ async def validate_obs_period(
             detail="Query parameter source_name cannot be empty",
         )
     return epic_obs_period(
-        start_time=start_time, end_time=end_time, source_name=source_name
+        start_time=start_time.replace(tzinfo=None), end_time=end_time.replace(tzinfo=None), source_name=source_name
     )
 
 

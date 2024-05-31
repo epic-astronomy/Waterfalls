@@ -28,6 +28,7 @@ async def get_imaging_sessions(
     pagination: ObsSessionsPagiDep,
     obs_period: ObsPeriodDep,
 ):
+    print(obs_period)
     group_rows = [
         epic_img_metadata.session_id,
         epic_img_metadata.chan0,
@@ -37,34 +38,29 @@ async def get_imaging_sessions(
         epic_img_metadata.int_time,
     ]
     stmnt = (
-        select(func.count(func.distinct(*group_rows)))
+        select(func.count(epic_img_metadata.session_id))
         .where(
-            epic_img_metadata.img_time.between(
-                obs_period.start_time, obs_period.end_time
-            )
+            func.tsrange(obs_period.start_time, obs_period.end_time,'[]').op('&&')(func.tsrange(epic_img_metadata.session_start,epic_img_metadata.session_end,'[]'))
         )
         .where(
-            epic_img_metadata.source_names.contains([obs_period.source_name])
+            epic_img_metadata.source_name == obs_period.source_name
         )
     )
     count = session.exec(stmnt).one()
     stmnt = (
         select(
             *group_rows,
-            func.min(epic_img_metadata.img_time).label("start_time"),
-            func.max(epic_img_metadata.img_time).label("end_time"),
-        )
-        .group_by(*group_rows)
-        .where(
-            epic_img_metadata.img_time.between(
-                obs_period.start_time, obs_period.end_time
-            )
+            epic_img_metadata.session_start.label("start_time"),
+            epic_img_metadata.session_end.label("end_time"),
         )
         .where(
-            epic_img_metadata.source_names.contains([obs_period.source_name])
+            func.tsrange(obs_period.start_time, obs_period.end_time,'[]').op('&&')(func.tsrange(epic_img_metadata.session_start,epic_img_metadata.session_end,'[]'))
         )
-        .order_by(func.min(epic_img_metadata.img_time).label("start_time").desc())
-        .order_by(epic_img_metadata.chan0.desc())
+        .where(
+            epic_img_metadata.source_name == obs_period.source_name
+        )
+        .order_by(epic_img_metadata.session_start.label("start_time").desc())
+        .order_by(epic_img_metadata.chan0.asc())
         .offset(pagination.skip)
         .limit(pagination.limit)
     )
@@ -96,5 +92,7 @@ async def get_spectrogram(
             == func.any_([specgm_window.pixel_positions])
         )
     )
+
+    print(stmnt.compile().string)
     data = session.exec(stmnt).all()
     return data
