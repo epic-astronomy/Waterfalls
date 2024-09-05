@@ -14,7 +14,7 @@ const tabItems = reactive([{
   disabled: false
 }, {
   label: 'Session',
-  description: 'Select an observing session to continue',
+  description: 'Select an observing session for ',
   icon: 'i-material-symbols-date-range',
   slot: 'sessionSelection',
   disabled: false
@@ -179,7 +179,7 @@ useSeoMeta({
         <div v-if="watchSource">
           <div class="flex flex-wrap justify-between items-center m-2">
 
-            <span class="text-2xl">{{ item.description }}</span>
+            <span class="text-2xl">{{ item.description }} {{ watchSource?.source}}</span>
             <div class="flex justify-between" orientation="horizontal">
               <UButtonGroup>
 
