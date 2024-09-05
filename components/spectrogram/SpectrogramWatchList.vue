@@ -59,7 +59,7 @@ const pageTo = computed(() => Math.min(page.value * rowsPerPage.value, pageTotal
 
 const { pending, data: watchlist, error: error } = await useLazyAsyncData<WatchList>(
   'watchlist',
-  () => $fetch(rtConfig.public.fastapiBase + '/watchlist/watching/?page=' + page.value + '&nrows=' + rowsPerPage.value), {
+  () => $fetch(rtConfig.public.fastapiBase + '/watchlist/all/?page=' + page.value + '&nrows=' + rowsPerPage.value), {
   watch: [() => page.value],
   default: () => defaultWatchList
 })
