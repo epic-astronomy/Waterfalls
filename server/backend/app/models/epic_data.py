@@ -193,6 +193,16 @@ class epic_watchdog_public(SQLModel):
     data: list[epic_watchdog]
     count: int | None = Field(default=None)
 
+class chime_frb_trigger(BaseModel):
+    ra: float
+    dec: float
+    known_source_name: str
+    timestamp_utc_inf_freq: datetime
+    voevent: str
+    dm: float
+    secret: str
+    importance: float
+    snr: float
 
 if __name__ == "__main__":
     # use in-memory

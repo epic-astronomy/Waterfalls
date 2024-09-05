@@ -19,6 +19,8 @@ from app.models.epic_data import (
 )
 
 router = APIRouter()
+from app.core.config import settings
+
 
 
 @router.get("/sessions/", response_model=epic_img_session_public)
@@ -45,6 +47,9 @@ async def get_imaging_sessions(
         .where(
             epic_img_metadata.source_name == obs_period.source_name
         )
+        .where(
+            epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS)
+        )
     )
     count = session.exec(stmnt).one()
     stmnt = (
@@ -58,6 +63,9 @@ async def get_imaging_sessions(
         )
         .where(
             epic_img_metadata.source_name == obs_period.source_name
+        )
+        .where(
+            epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS)
         )
         .order_by(epic_img_metadata.session_start.label("start_time").desc())
         .order_by(epic_img_metadata.chan0.asc())

@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, List
 import secrets
 import warnings
 
@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     DOMAIN: str = "localhost"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     WATCHLIST_MAX_ROWS_PER_PAGE: int = 25
+    OBS_CHANS: List[int] = [1128 + i*132 for i in range(6)] + [2604 + i*132 for i in range(6)]
 
     @computed_field  # type: ignore[misc]
     @property
@@ -59,6 +60,10 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = Field('',validate_default=False)
     EPIC_DATA_SCHEMA: str = Field('epic',validate_default=False)
     MAX_SPECTROGRAM_PERIOD_S: int = 120
+    WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
+    SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
+    SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)
+    SLACK_CHIME_NOTIFIER_UNAME: str = Field('',validate_default=False)
 
     @computed_field  # type: ignore[misc]
     @property
