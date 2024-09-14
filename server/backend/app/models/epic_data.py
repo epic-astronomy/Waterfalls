@@ -1,5 +1,5 @@
 from sqlmodel import Field, SQLModel, create_engine, MetaData
-from sqlmodel import GUID, LargeBinary, Text, select
+from sqlmodel import LargeBinary, Text, select
 from sqlalchemy.dialects.postgresql import ARRAY, BYTEA
 from datetime import datetime
 from pydantic import BaseModel
