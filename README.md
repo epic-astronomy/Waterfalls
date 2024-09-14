@@ -1,6 +1,6 @@
 # EPIC Waterfalls
 
-This project contains the source code for the EPIC Astronomy website and the Waterfalls application. See [http://epic-astronomy.org](http://epic-astronomy.org) for more details.
+This project contains the source code for the EPIC Astronomy website and the Waterfalls application. See [https://epic-astronomy.org](https://epic-astronomy.org) for more details.
 
 The frontend is built with the NuxtJS framework and utlilizes Nuxt UI Pro and custom built vue components. The backend is powered by FastAPI and SQLModel to fetch all spectrogram related data from EPIC's Postgres database located at the Long Wavelength Array in Seveilleta, New Mexico.
 
