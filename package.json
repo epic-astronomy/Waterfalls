@@ -25,6 +25,7 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@nuxtjs/hanko": "^0.7.0",
     "@types/plotly.js-dist-min": "^2.3.4"
   }
 }

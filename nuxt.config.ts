@@ -8,23 +8,27 @@ export default defineNuxtConfig({
     '@nuxt/content',
     'nuxt-icon',
     'nuxt-og-image',
+    "@nuxtjs/hanko"
   ],
   colorMode: {
     preference: 'dark',
   },
-  ui:{
-    icons:['heroicons','simple-icons','material-symbols']
+  hanko: {
+    apiURL: process.env.NUXT_PUBLIC_HANKO_API_URL
+  },
+  ui: {
+    icons: ['heroicons', 'simple-icons', 'material-symbols']
   },
   routeRules: {
     '/api/search.json': { prerender: true },
     '/docs': { redirect: '/docs/introduction', prerender: false },
-    '/api/v1/**':{proxy: {to: 'http://127.0.0.1:8000/api/v1/**'}}
+    '/api/v1/**': { proxy: { to: 'http://127.0.0.1:8002/api/v1/**' } }
   },
   runtimeConfig: {
     // Public keys that are exposed to the client
     public: {
       fastapiBase: process.env.NUXT_FAST_API_BASE || '/api/v1'
-    } 
+    }
   },
   vite: {
     optimizeDeps: {

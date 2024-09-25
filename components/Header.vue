@@ -3,6 +3,7 @@ import type { NavItem } from '@nuxt/content/dist/runtime/types'
 
 const navigation = inject<Ref<NavItem[]>>('navigation', ref([]))
 
+
 const links = [{
   label: 'Docs',
   to: '/docs'
@@ -16,6 +17,8 @@ const links = [{
   label: 'Blog',
   to: '/blog'
 }]
+
+
 </script>
 
 <template>
@@ -25,8 +28,8 @@ const links = [{
     </template>
 
     <template #right>
-      <UButton disabled label="Sign in" color="gray" to="/login" />
-      <UButton disabled label="Sign up" icon="i-heroicons-arrow-right-20-solid" trailing to="/signup" class="hidden lg:flex" />
+      <!-- <UButton label="Sign in"  color="gray" to="/login" /> -->
+      <UserMngmnt></UserMngmnt>
     </template>
 
     <template #panel>
