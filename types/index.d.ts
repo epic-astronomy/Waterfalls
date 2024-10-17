@@ -60,3 +60,21 @@ export interface SpecgmData{
   pixel_values: string,
   img_time: string
 }
+
+export interface DailyDigestSrc{
+  source_name: string,
+  chan0: number,
+  chan_bw_hz: number
+}
+
+export interface DailyDigestSrcConfig{
+  source_name: string,
+  chan0: int[],
+  chan_bw_hz: int[]
+}
+
+export interface DailyDigestData{
+  img_time: string,
+  stokes_i: number[],
+  stokes_v: number[]
+}

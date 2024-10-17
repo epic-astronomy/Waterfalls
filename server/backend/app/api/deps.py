@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from typing import Annotated
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status, Query
@@ -32,6 +32,18 @@ class SpecgmWindowDef:
     session_id: UUID
     source_name: str
     pixel_positions: list[str]
+
+@dataclass
+class DailyDigestDef:
+    start_time: datetime
+    end_time: datetime
+    source_name: str
+    cfreq: float
+
+@dataclass
+class DailySourcesDef:
+    start_time: datetime
+    end_time: datetime
 
 
 async def validate_pagination(page: int = 1, nrows: int = 10) -> Pagination:
@@ -84,6 +96,25 @@ async def validate_specgm_window(
         pixel_positions=pixel_positions
     )
 
+async def validate_daily_digest_def(
+        day: datetime,
+        source_name: str,
+        cfreq: float
+) -> DailyDigestDef:
+    return DailyDigestDef(
+        start_time=datetime.combine(day.date(), time.min).replace(tzinfo=None),
+        end_time=datetime.combine(day.date(),time.max).replace(tzinfo=None),
+        source_name=source_name,
+        cfreq=cfreq
+    )
+
+async def validate_daily_digest_srcs_def(
+        day:datetime
+) -> DailySourcesDef:
+    return DailySourcesDef(
+        start_time=datetime.combine(day.date(), time.min).replace(tzinfo=None),
+        end_time=datetime.combine(day.date(),time.max).replace(tzinfo=None)
+    )
 
 def get_db() -> Generator[Session, None, None]:
     with Session(engine) as session:
@@ -100,3 +131,5 @@ WatchListPagiDep = Annotated[Pagination, Depends(validate_pagination)]
 ObsSessionsPagiDep = Annotated[Pagination, Depends(validate_pagination)]
 ObsPeriodDep = Annotated[epic_obs_period, Depends(validate_obs_period)]
 SpecgmWindowDep = Annotated[SpecgmWindowDef, Depends(validate_specgm_window)]
+DailyDigestDep = Annotated[DailyDigestDef, Depends(validate_daily_digest_def)]
+DailySourcesDep = Annotated[DailySourcesDef, Depends(validate_daily_digest_srcs_def)]

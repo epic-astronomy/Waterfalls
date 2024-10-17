@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
-from sqlmodel import select, func
+from sqlmodel import select, func, text
 
 from sqlalchemy.dialects.postgresql import TEXT
+from datetime import datetime
+
 
 from app.api.deps import UserDep, WatchListPagiDep
 from app.api.deps import (
@@ -9,18 +11,22 @@ from app.api.deps import (
     ObsSessionsPagiDep,
     ObsPeriodDep,
     SpecgmWindowDep,
+    DailyDigestDep,
+    DailySourcesDep
 )
 from app.models.epic_data import (
     epic_img_session_public,
     epic_img_metadata,
     epic_pixels,
     epic_pixels_public,
-    test_epic_pixels
+    test_epic_pixels,
+    epic_daily_digest_table,
+    epic_daily_digest_base,
+    daily_obs
 )
 
 router = APIRouter()
 from app.core.config import settings
-
 
 
 @router.get("/sessions/", response_model=epic_img_session_public)
@@ -42,14 +48,18 @@ async def get_imaging_sessions(
     stmnt = (
         select(func.count(epic_img_metadata.session_id))
         .where(
-            func.tsrange(obs_period.start_time, obs_period.end_time,'[]').op('&&')(func.tsrange(epic_img_metadata.session_start,epic_img_metadata.session_end,'[]'))
+            func.tsrange(obs_period.start_time, obs_period.end_time, "[]").op(
+                "&&"
+            )(
+                func.tsrange(
+                    epic_img_metadata.session_start,
+                    epic_img_metadata.session_end,
+                    "[]",
+                )
+            )
         )
-        .where(
-            epic_img_metadata.source_name == obs_period.source_name
-        )
-        .where(
-            epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS)
-        )
+        .where(epic_img_metadata.source_name == obs_period.source_name)
+        .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
     )
     count = session.exec(stmnt).one()
     stmnt = (
@@ -59,14 +69,18 @@ async def get_imaging_sessions(
             epic_img_metadata.session_end.label("end_time"),
         )
         .where(
-            func.tsrange(obs_period.start_time, obs_period.end_time,'[]').op('&&')(func.tsrange(epic_img_metadata.session_start,epic_img_metadata.session_end,'[]'))
+            func.tsrange(obs_period.start_time, obs_period.end_time, "[]").op(
+                "&&"
+            )(
+                func.tsrange(
+                    epic_img_metadata.session_start,
+                    epic_img_metadata.session_end,
+                    "[]",
+                )
+            )
         )
-        .where(
-            epic_img_metadata.source_name == obs_period.source_name
-        )
-        .where(
-            epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS)
-        )
+        .where(epic_img_metadata.source_name == obs_period.source_name)
+        .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .order_by(epic_img_metadata.session_start.label("start_time").desc())
         .order_by(epic_img_metadata.chan0.asc())
         .offset(pagination.skip)
@@ -76,6 +90,35 @@ async def get_imaging_sessions(
     obs_sessions = session.exec(stmnt).all()
     return epic_img_session_public(data=obs_sessions, count=count)
 
+@router.get("/dailyobs/", response_model=list[daily_obs])
+async def get_imaging_sessions(
+    session: SessionDep,
+    current_user: UserDep,
+    window: DailySourcesDep
+):
+    stmnt = (
+        select(
+            epic_img_metadata.source_name,
+            epic_img_metadata.chan0,
+            epic_img_metadata.chan_bw_hz,
+        )
+        .where(
+            func.tsrange(window.start_time, window.end_time, "[]").op(
+                "&&"
+            )(
+                func.tsrange(
+                    epic_img_metadata.session_start,
+                    epic_img_metadata.session_end,
+                    "[]",
+                )
+            )
+        ).where(
+            (epic_img_metadata.session_end - epic_img_metadata.session_start) >= text("INTERVAL '30 MINUTES'")
+        ).distinct().order_by(epic_img_metadata.chan0)
+    )
+    print(stmnt)
+    return  session.exec(stmnt).all()
+    
 
 @router.get("/spectrogram/", response_model=list[test_epic_pixels])
 async def get_spectrogram(
@@ -102,5 +145,24 @@ async def get_spectrogram(
     )
 
     print(stmnt.compile().string)
+    data = session.exec(stmnt).all()
+    return data
+
+
+@router.get("/dailydigest/", response_model=list[epic_daily_digest_base])
+async def get_daily_digest(
+    session: SessionDep, current_user: UserDep, digest_def: DailyDigestDep
+):
+    stmnt = (
+        select(
+            epic_daily_digest_table.img_time,
+            epic_daily_digest_table.stokes_i,
+            epic_daily_digest_table.stokes_v,
+        )
+        .where(epic_daily_digest_table.source_name == digest_def.source_name)
+        .where(epic_daily_digest_table.img_time >= digest_def.start_time)
+        .where(epic_daily_digest_table.img_time <= digest_def.end_time)
+        .where(epic_daily_digest_table.cfreq == digest_def.cfreq)
+    )
     data = session.exec(stmnt).all()
     return data

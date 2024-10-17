@@ -1,6 +1,7 @@
 from sqlmodel import Field, SQLModel, create_engine, MetaData
-from sqlmodel import LargeBinary, Text, select
-from sqlalchemy.dialects.postgresql import ARRAY, BYTEA
+# from sqlmodel import LargeBinary, Text, select
+from sqlalchemy.dialects.postgresql import  BYTEA, FLOAT, ARRAY
+from sqlalchemy.types import  Float
 from datetime import datetime
 from pydantic import BaseModel
 from uuid import UUID
@@ -169,6 +170,24 @@ class epic_files_metadata(SQLModel, table=True):
     epic_version: str
     epoch_time: datetime
 
+class epic_daily_digest_base(SQLModel):
+    img_time: datetime = Field(default=None, primary_key=True)
+    stokes_i: List[float]  = Field(sa_column=Column(ARRAY(FLOAT)),default_factory=list)
+    stokes_v: List[float]  = Field(sa_column=Column(ARRAY(FLOAT)),default_factory=list)
+
+class epic_daily_digest_table(epic_daily_digest_base, table=True):
+    __tablename__ = "epic_daily_digest"
+    metadata = _metadata
+    source_name: str= Field(default=None, primary_key=True)
+    cfreq :float = Field(default=None, primary_key=True)
+    
+    class Config:
+        arbitrary_types_allowed = True        
+
+class daily_obs(SQLModel):
+    source_name: str
+    chan0: int
+    chan_bw_hz: int
 
 class epic_watchdog(SQLModel, table=True):
     # metadata = _metadata

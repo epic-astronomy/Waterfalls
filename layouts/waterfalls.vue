@@ -24,6 +24,9 @@ const links = [{
   }, {
     label: 'LWA-SV',
     to: '/waterfalls/spectrograms/lwasv'
+  },{
+    label:'Daily Digest',
+    to: '/waterfalls/spectrograms/dailydigest'
   }
     // ,{
     //   label:'Plotly test',
