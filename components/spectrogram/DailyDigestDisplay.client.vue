@@ -16,7 +16,7 @@ const rtConfig = useRuntimeConfig()
 const digestDay = ref() 
 const selectedSrc = ref('')
 const chan_bw_hz = ref(50000)
-const obsEnd = format((new Date().toISOString().slice(0, -1)), 'yyyy-MM-dd') // would be the current day
+const obsEnd = format((new Date().toISOString().slice(0, -1)), 'yyyy-MM-dd') // would be the current day in UTC
 const selectedSrcConfigs = ref<{ [source: string]: number[] }>({}) // stores the observed frequencies for each source
 const sourceNames = ref<String[]>([])
 
@@ -88,6 +88,15 @@ interface cfreqOpts{
   chan0: number
 }
 
+const displayModes = [{
+  label: '|I|',
+  value: 'i'
+}, {
+  label: '|V|',
+  value: 'v'
+}]
+
+const selectedMode = ref('i')
 
 const fetchTrigger = ref('')
 const selectedCfreq = ref<cfreqOpts>()
@@ -130,9 +139,9 @@ const plotDataExists = computed(()=>{
 
 var stokes_I = Array<Float32Array>()
 var stokes_V = Array<Float32Array>()
-var raw_data = Array<Float32Array>()
+// var raw_data = Array<Float32Array>()
 var plotData = ref(Array<Float32Array>())
-var plotDataRaw = Array<Float32Array>()
+// var plotDataRaw = Array<Float32Array>()
 const plotlyDivId = `plotly-${uuidv4()}`
 
 const plotlyAxes = reactive({
@@ -215,6 +224,26 @@ var plotlyTraces = computed(() => {
 function updatePlot(){
   plotlyHTMLElement = Plotly.newPlot(plotlyDivId, plotlyTraces.value, plotlyLayout.value, plotlyConfig.value)
 }
+
+function updatePlotData() {
+  console.log(selectedMode.value)
+  switch (selectedMode.value) {
+    case 'i':
+      plotData.value = stokes_I
+      break
+    case 'v':
+      plotData.value = stokes_V
+      break
+  }
+}
+
+watch(() => selectedMode.value, (newMode, _) => {
+  console.log('changing plotdata')
+  updatePlotData()
+  updatePlot()
+
+})
+
 
 
 watch(()=>digestData.value, (newData,_)=>{
@@ -305,7 +334,11 @@ onBeforeUnmount(() => {
           <USelectMenu v-model="selectedCfreq" :options="cfreqLabels" option-attribute="label" placeholder="Select Frequency">
           </USelectMenu>
         </div>
-
+        <div class="flex justify-center space-x-4 items-center" >
+        <div>Stokes: </div>
+        <div style="font-family: monospace;"  class="flex justify-center space-x-4 items-center">
+          <URadio v-for="mode of displayModes" :key="mode.value" v-model="selectedMode" v-bind="mode" legend="Show" /></div>
+        </div>
         <UButton :ui="{ rounded: 'rounded-md' }" variant="outline" label="Display" @click="displayData"
           :disabled="fetchDataDisabled">
         </UButton>

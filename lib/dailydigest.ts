@@ -23,7 +23,7 @@ export function get_stokes_I(data: DailyDigestData[]) {
     img_time.push(data[i].img_time)
     for (let j = 0; j < nChans; j++) {
       stokes_I[j][i] = data[i].stokes_i[j]
-      // stokes_V[j][i] = data[i].stokes_v[j]
+      stokes_V[j][i] = data[i].stokes_v[j]
     }
   }
 
