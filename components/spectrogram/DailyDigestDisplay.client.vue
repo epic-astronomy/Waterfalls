@@ -49,14 +49,12 @@ watch(() => error, (n, _) => {
 
 // update the sources and their observed frequencies after selecting a date
 watch(() => digestSrcs.value, (n, o) => {
-  console.log(n,o, digestSrcs.value)
   if(!n) return
   sourceNames.value = []
   selectedSrc.value = ''
   let configs: { [source: string]: number[] } = {}
   let cur_srcs: Set<String> = new Set()
   for (const obs of digestSrcs.value) {
-    //console.log(obs.source_name)
     cur_srcs.add(obs.source_name)
     if (obs.source_name in configs) {
       configs[obs.source_name].push(obs.chan0)
@@ -71,13 +69,10 @@ watch(() => digestSrcs.value, (n, o) => {
     break
   }
   selectedSrcConfigs.value = configs
-  //console.log(cur_srcs)
   let sources: String[] = []
   for (const src of cur_srcs.values()) {
     sources.push(src)
   }
-  console.log(sources)
-
   sourceNames.value = sources
 })
 //////////////////////////////////
@@ -223,7 +218,6 @@ function updatePlot(){
 
 
 watch(()=>digestData.value, (newData,_)=>{
-  console.log(digestData.value)
   if(!newData) return
   if(!selectedCfreq.value) return
 
@@ -258,7 +252,6 @@ function displayData(){
 }
 
 const fetchDataDisabled = computed(()=>{
-  console.log(selectedCfreq.value)
   return selectedSrc.value == '' || selectedCfreq.value ==undefined || !("cfreq" in selectedCfreq.value)? true: false
 })
 
@@ -317,8 +310,6 @@ onBeforeUnmount(() => {
           :disabled="fetchDataDisabled">
         </UButton>
       </div>
-      <!-- {{ digestDay }} {{ obsEnd }} {{ selectedSrcConfigs }} {{ cfreqLabels }} {{ selectedCfreq }} {{fetchDataDisabled}} -->
-        {{ plotData.length==0 }}
     </UCard>
     <div v-if="!fetchDataDisabled">
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
