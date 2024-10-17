@@ -226,7 +226,6 @@ function updatePlot(){
 }
 
 function updatePlotData() {
-  console.log(selectedMode.value)
   switch (selectedMode.value) {
     case 'i':
       plotData.value = stokes_I
@@ -238,7 +237,6 @@ function updatePlotData() {
 }
 
 watch(() => selectedMode.value, (newMode, _) => {
-  console.log('changing plotdata')
   updatePlotData()
   updatePlot()
 
