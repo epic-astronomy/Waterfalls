@@ -38,7 +38,7 @@ class DailyDigestDef:
     start_time: datetime
     end_time: datetime
     source_name: str
-    cfreq: float
+    #cfreq: float
 
 @dataclass
 class DailySourcesDef:
@@ -99,13 +99,13 @@ async def validate_specgm_window(
 async def validate_daily_digest_def(
         day: datetime,
         source_name: str,
-        cfreq: float
+        #cfreq: float
 ) -> DailyDigestDef:
     return DailyDigestDef(
         start_time=datetime.combine(day.date(), time.min).replace(tzinfo=None),
         end_time=datetime.combine(day.date(),time.max).replace(tzinfo=None),
         source_name=source_name,
-        cfreq=cfreq
+        #cfreq=cfreq
     )
 
 async def validate_daily_digest_srcs_def(
