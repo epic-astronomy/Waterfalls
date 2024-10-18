@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { format } from 'date-fns';
-import type { DailyDigestSrc, DailyDigestSrcConfig, DailyDigestData } from '~/types';
+import type { DailyDigestSrc, DailyDigestSrcConfig, DailyDigestData, DailyDigestResp, DailyDigestTraceData } from '~/types';
 import * as digestUtils from '~/lib/dailydigest'
 import { v4 as uuidv4 } from "uuid"
 import Plotly from 'plotly.js-dist-min'
-
 
 
 const toast = useToast()
 const colorMode = useColorMode()
 
 
-const rtConfig = useRuntimeConfig() 
+const rtConfig = useRuntimeConfig()
 
-const digestDay = ref() 
+const digestDay = ref()
 const selectedSrc = ref('')
 const chan_bw_hz = ref(50000)
 const obsEnd = format((new Date().toISOString().slice(0, -1)), 'yyyy-MM-dd') // would be the current day in UTC
@@ -49,7 +48,7 @@ watch(() => error, (n, _) => {
 
 // update the sources and their observed frequencies after selecting a date
 watch(() => digestSrcs.value, (n, o) => {
-  if(!n) return
+  if (!n) return
   sourceNames.value = []
   selectedSrc.value = ''
   let configs: { [source: string]: number[] } = {}
@@ -64,7 +63,7 @@ watch(() => digestSrcs.value, (n, o) => {
   }
 
   // assume a constant bandwidth for all observations
-  for(const obs of digestSrcs.value){
+  for (const obs of digestSrcs.value) {
     chan_bw_hz.value = obs.chan_bw_hz
     break
   }
@@ -82,7 +81,7 @@ watch(() => digestSrcs.value, (n, o) => {
 //////////////////////////////////
 //Start:  Data fetching
 //////////////////////////////////
-interface cfreqOpts{
+interface cfreqOpts {
   cfreq: number,
   label: string,
   chan0: number
@@ -100,7 +99,7 @@ const selectedMode = ref('i')
 
 const fetchTrigger = ref('')
 const selectedCfreq = ref<cfreqOpts>()
-const { pending: pending2, data: digestData, error: dataError } = await useLazyAsyncData<DailyDigestData[]>(
+const { pending: pending2, data: digestData, error: dataError } = await useLazyAsyncData<DailyDigestResp>(
   'dailydatafetch',
   () => $fetch(rtConfig.public.fastapiBase + '/imaging/dailydigest/',
     {
@@ -112,37 +111,39 @@ const { pending: pending2, data: digestData, error: dataError } = await useLazyA
     })
   , {
     watch: [() => fetchTrigger.value],
-    default: () => []
+    default: () => null
   }
 )
 
 
-const cfreqLabels = computed(()=>{
-  if(selectedSrc.value=='' || !(selectedSrc.value in selectedSrcConfigs.value)) return []
-  selectedCfreq.value = {}
+// const cfreqLabels = computed(() => {
+//   if (selectedSrc.value == '' || !(selectedSrc.value in selectedSrcConfigs.value)) return []
+//   selectedCfreq.value = undefined
 
-  let cfreqs: cfreqOpts[] = []
-  let nchan = 128*25000/chan_bw_hz.value
-  for(const chan0 of selectedSrcConfigs.value[selectedSrc.value]){
-    let cfreq_comp=(chan0+nchan/2-1)*25000
-    let cfreq = chan0 * 0.025 + nchan * chan_bw_hz.value/2/1e6
-    cfreqs.push({'cfreq':cfreq_comp, 'chan0':chan0, 'label':String((cfreq).toFixed(2))+ ' MHz'})
-  }
+//   let cfreqs: cfreqOpts[] = []
+//   let nchan = 128 * 25000 / chan_bw_hz.value
+//   for (const chan0 of selectedSrcConfigs.value[selectedSrc.value]) {
+//     let cfreq_comp = (chan0 + nchan / 2 - 1) * 25000
+//     let cfreq = chan0 * 0.025 + nchan * chan_bw_hz.value / 2 / 1e6
+//     cfreqs.push({ 'cfreq': cfreq_comp, 'chan0': chan0, 'label': String((cfreq).toFixed(2)) + ' MHz' })
+//   }
 
-  return cfreqs
-  
-})
+//   return cfreqs
 
-const plotDataExists = computed(()=>{
-  return plotData.value.length !=0
-})
+// })
 
-var stokes_I = Array<Float32Array>()
-var stokes_V = Array<Float32Array>()
+// const plotDataExists = computed(()=>{
+//   return plotData.value.length !=0
+// })
+
+// var stokes_I = Array<Float32Array>()
+// var stokes_V = Array<Float32Array>()
 // var raw_data = Array<Float32Array>()
-var plotData = ref(Array<Float32Array>())
-// var plotDataRaw = Array<Float32Array>()
+// var plotData = ref(Array<Float32Array>())
+var plotTraces = ref<{ [cfreq: number]: DailyDigestTraceData }>({})
+var plotDataRaw: DailyDigestResp
 const plotlyDivId = `plotly-${uuidv4()}`
+const gammacorr = ref<number>(0.5)
 
 const plotlyAxes = reactive({
   xLabels: Array<string>(),
@@ -151,11 +152,11 @@ const plotlyAxes = reactive({
 
 var plotlyHTMLElement
 var plotlyLayout = computed(() => {
-  if(!selectedCfreq.value) return
-  let nChans = 128*25000/chan_bw_hz.value
+  // if (!selectedCfreq.value) return
+  let nChans = 128 * 25000 / chan_bw_hz.value
   return {
     title: {
-      text: selectedSrc.value +' - '+ (selectedCfreq.value?.chan0 * 0.025 + nChans * chan_bw_hz.value/2/1e6).toFixed(2) + ' MHz | LWA-Sevilleta',
+      text: selectedSrc.value + ' | LWA-Sevilleta',
       font: {
         family: 'Courier New, monospace',
         size: 24,
@@ -189,9 +190,10 @@ var plotlyLayout = computed(() => {
       tickfont: {
         color: colorMode.value == 'dark' ? 'white' : 'black'
       },
-      tickcolor: colorMode.value == 'dark' ? 'white' : 'black'
+      tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
+      type: 'log'
     },
-    paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)'
+    paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)', autosize: true
   }
 })
 
@@ -202,63 +204,70 @@ var plotlyConfig = computed(() => {
       format: 'png', // one of png, svg, jpeg, webp
       filename: 'EPIC Spectrogram - ' + selectedSrc.value,
       scale: 3
-    }
+    }, responsive: true
   }
 })
 
 var plotlyTraces = computed(() => {
-  return [{
-    z: plotData.value, type: 'heatmap', x: plotlyAxes.xLabels, y: plotlyAxes.yLabels, hoverongaps: false,
-    colorbar: {
-      exponentformat: 'e',
-      bordercolor: colorMode.value == 'dark' ? 'white' : 'black',
-      tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
-      tickfont: {
-        color: colorMode.value == 'dark' ? 'white' : 'black',
-        family: 'Courier New, monospace'
+  if (!plotTraces.value) return []
+  let traces = []
+  let counter = 0
+  for (const cfreq in plotTraces.value) {
+    let trace = plotTraces.value[cfreq]
+    traces.push({
+      name: String((cfreq / 1e6).toFixed(2)) + ' MHz',
+      z: selectedMode.value == 'i' ? trace.stokes_I : trace.stokes_V, type: 'heatmap',
+      x: trace.img_time, y: trace.freqs,
+      hoverongaps: false, showscale: counter == 0 ? true : false,
+      colorbar: {
+        exponentformat: 'e',
+        bordercolor: colorMode.value == 'dark' ? 'white' : 'black',
+        tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
+        tickfont: {
+          color: colorMode.value == 'dark' ? 'white' : 'black',
+          family: 'Courier New, monospace'
+        }
       }
-    }, colorscale: 'Viridis', zsmooth: 'best'
-  }]
+      , colorscale: 'RdBu', zsmooth: 'best' 
+    })
+    counter++
+  }
+
+  return traces
+
 })
 
-function updatePlot(){
+function updatePlot() {
+  if (fetchDataDisabled.value) return
   plotlyHTMLElement = Plotly.newPlot(plotlyDivId, plotlyTraces.value, plotlyLayout.value, plotlyConfig.value)
 }
 
-function updatePlotData() {
-  switch (selectedMode.value) {
-    case 'i':
-      plotData.value = stokes_I
-      break
-    case 'v':
-      plotData.value = stokes_V
-      break
-  }
-}
+// function updatePlotData() {
+//   switch (selectedMode.value) {
+//     case 'i':
+//       plotData.value = stokes_I
+//       break
+//     case 'v':
+//       plotData.value = stokes_V
+//       break
+//   }
+// }
 
 watch(() => selectedMode.value, (newMode, _) => {
-  updatePlotData()
+  // updatePlotData()
   updatePlot()
-
 })
 
+watch(() => gammacorr.value, (n, _) => {
+  console.log(n, _, gammacorr.value)
+  plotTraces.value = digestUtils.split_data_freq(plotDataRaw, n)
+  updatePlot()
+})
 
-
-watch(()=>digestData.value, (newData,_)=>{
-  if(!newData) return
-  if(!selectedCfreq.value) return
-
-  let res = digestUtils.get_stokes_I(newData)
-  stokes_I = res.stokes_I
-  stokes_V = res.stokes_V
-  plotlyAxes.xLabels = res.img_time
-  let nChans = 128*25000/chan_bw_hz.value
-  plotlyAxes.yLabels = new Array(nChans)
-  for (let i = 0; i < nChans; ++i) {
-    plotlyAxes.yLabels[i] = (selectedCfreq.value?.chan0) * 0.025 + i * chan_bw_hz.value / 1e6
-  }
-
-  plotData.value=stokes_I
+watch(() => digestData.value, (newData, _) => {
+  if (!newData) return
+  plotDataRaw = newData
+  plotTraces.value = digestUtils.split_data_freq(plotDataRaw, gammacorr.value)
   updatePlot()
 })
 
@@ -272,14 +281,14 @@ watch(() => colorMode.value, (n, o) => {
   updatePlot()
 })
 
-function displayData(){
-  if(selectedSrc.value!='' && selectedCfreq.value!=undefined){
-    fetchTrigger.value = selectedSrc.value+selectedCfreq.value.label
+function displayData() {
+  if (selectedSrc.value != '') {
+    fetchTrigger.value = selectedSrc.value + digestDay.value
   }
 }
 
-const fetchDataDisabled = computed(()=>{
-  return selectedSrc.value == '' || selectedCfreq.value ==undefined || !("cfreq" in selectedCfreq.value)? true: false
+const fetchDataDisabled = computed(() => {
+  return selectedSrc.value == '' ? true : false
 })
 
 const resizeConfig = {
@@ -314,9 +323,9 @@ onBeforeUnmount(() => {
   <UDashboardPanelContent>
     <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }" class="relative">
       <UProgress v-if="pending || pending2" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
-      
+
       <div class="flex flex-wrap justify-evenly items-center">
-        
+
 
         <div class="flex flex-wrap justify-center items-center gap-2">
           <span class="text-md">Day (UTC): </span>
@@ -327,32 +336,33 @@ onBeforeUnmount(() => {
           <USelect v-model="selectedSrc" :options="sourceNames" placeholder="Select a source">
           </USelect>
         </div>
-        <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md"> Frequency: </span>
-          <USelectMenu v-model="selectedCfreq" :options="cfreqLabels" option-attribute="label" placeholder="Select Frequency">
-          </USelectMenu>
+        <div class="flex justify-center space-x-4 items-center">
+          <div>Stokes: </div>
+          <div style="font-family: monospace;" class="flex justify-center space-x-4 items-center">
+            <URadio v-for="mode of displayModes" :key="mode.value" v-model="selectedMode" v-bind="mode" legend="Show" />
+          </div>
         </div>
-        <div class="flex justify-center space-x-4 items-center" >
-        <div>Stokes: </div>
-        <div style="font-family: monospace;"  class="flex justify-center space-x-4 items-center">
-          <URadio v-for="mode of displayModes" :key="mode.value" v-model="selectedMode" v-bind="mode" legend="Show" /></div>
+        <div class="flex flex-wrap justify-center items-center gap-2 xs">
+          <span class="text-md"> Scale exponent: </span>
+          <UInput v-model="gammacorr" type="number" step="0.1" min="0" max="2" />
         </div>
         <UButton :ui="{ rounded: 'rounded-md' }" variant="outline" label="Display" @click="displayData"
           :disabled="fetchDataDisabled">
         </UButton>
       </div>
     </UCard>
-    <div v-if="!fetchDataDisabled">
-    <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
-      <div :id="plotlyDivId"></div>
-    
-    </UCard></div>
-    <div v-else>
-          <UCard>
-            <UPageHero title="Please select  date -> source -> frequency to continue" align="center">
-            </UPageHero>
-          </UCard>
+    <div v-if="!fetchDataDisabled" class="flex-1 h-full">
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1', base: 'h-full' }, base: 'h-full' }">
+        <div :id="plotlyDivId" class="h-full"></div>
 
-        </div>
+      </UCard>
+    </div>
+    <div v-else>
+      <UCard>
+        <UPageHero title="Please select a date -> a source  to continue" align="center">
+        </UPageHero>
+      </UCard>
+
+    </div>
   </UDashboardPanelContent>
 </template>

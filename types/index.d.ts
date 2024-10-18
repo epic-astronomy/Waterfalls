@@ -76,5 +76,22 @@ export interface DailyDigestSrcConfig{
 export interface DailyDigestData{
   img_time: string,
   stokes_i: number[],
-  stokes_v: number[]
+  stokes_v: number[],
+  cfreq: number
+}
+export interface DailyDigestTraceData{
+  img_time: string[],
+  stokes_I: Array<Float32Array>,
+  stokes_V: Array<Float32Array>,
+  freqs: number[]
+}
+
+export interface DailyDigestStats{
+  cfreq: number,
+  count: number
+}
+
+export interface DailyDigestResp{
+  stats: DailyDigestStats[],
+  data: DailyDigestData[]
 }
