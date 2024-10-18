@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     WATCHLIST_MAX_ROWS_PER_PAGE: int = 25
     OBS_CHANS: List[int] = [1128 + i*132 for i in range(6)] + [2604 + i*132 for i in range(6)]
+    CFREQS: List[int] = [(1128+ i*132+31)*25000  for i in range(6)] + [(2604 + i*132+31)*25000 for i in range(6)]
 
     @computed_field  # type: ignore[misc]
     @property

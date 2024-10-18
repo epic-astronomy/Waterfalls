@@ -174,6 +174,15 @@ class epic_daily_digest_base(SQLModel):
     img_time: datetime = Field(default=None, primary_key=True)
     stokes_i: List[float]  = Field(sa_column=Column(ARRAY(FLOAT)),default_factory=list)
     stokes_v: List[float]  = Field(sa_column=Column(ARRAY(FLOAT)),default_factory=list)
+    cfreq: float
+
+class epic_daily_digest_stats(SQLModel):
+    cfreq: float
+    count: int
+
+class epic_daily_digest_public(SQLModel):
+    stats: List[epic_daily_digest_stats]
+    data: List[epic_daily_digest_base]
 
 class epic_daily_digest_table(epic_daily_digest_base, table=True):
     __tablename__ = "epic_daily_digest"
