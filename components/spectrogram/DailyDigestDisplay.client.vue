@@ -32,7 +32,7 @@ const { pending, data: digestSrcs, error: error } = await useLazyAsyncData<Daily
       }
     })
   , {
-    watch: [() => digestDay.value],
+    watch: [digestDay],
     default: () => []
   }
 )
@@ -143,7 +143,7 @@ const { pending: pending2, data: digestData, error: dataError } = await useLazyA
 var plotTraces = ref<{ [cfreq: number]: DailyDigestTraceData }>({})
 var plotDataRaw: DailyDigestResp
 const plotlyDivId = `plotly-${uuidv4()}`
-const gammacorr = ref<number>(0.5)
+const gammaCorr = ref<number>(0.5)
 
 const plotlyAxes = reactive({
   xLabels: Array<string>(),
@@ -191,7 +191,6 @@ var plotlyLayout = computed(() => {
         color: colorMode.value == 'dark' ? 'white' : 'black'
       },
       tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
-      type: 'log'
     },
     paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)', autosize: true
   }
@@ -258,8 +257,7 @@ watch(() => selectedMode.value, (newMode, _) => {
   updatePlot()
 })
 
-watch(() => gammacorr.value, (n, _) => {
-  console.log(n, _, gammacorr.value)
+watch(() => gammaCorr.value, (n, _) => {
   plotTraces.value = digestUtils.split_data_freq(plotDataRaw, n)
   updatePlot()
 })
@@ -267,7 +265,7 @@ watch(() => gammacorr.value, (n, _) => {
 watch(() => digestData.value, (newData, _) => {
   if (!newData) return
   plotDataRaw = newData
-  plotTraces.value = digestUtils.split_data_freq(plotDataRaw, gammacorr.value)
+  plotTraces.value = digestUtils.split_data_freq(plotDataRaw, gammaCorr.value)
   updatePlot()
 })
 
@@ -344,14 +342,14 @@ onBeforeUnmount(() => {
         </div>
         <div class="flex flex-wrap justify-center items-center gap-2 xs">
           <span class="text-md"> Scale exponent: </span>
-          <UInput v-model="gammacorr" type="number" step="0.1" min="0" max="2" />
+          <UInput v-model="gammaCorr" type="number" step="0.1" min="0" max="20" />
         </div>
         <UButton :ui="{ rounded: 'rounded-md' }" variant="outline" label="Display" @click="displayData"
           :disabled="fetchDataDisabled">
         </UButton>
       </div>
     </UCard>
-    <div v-if="!fetchDataDisabled" class="flex-1 h-full">
+    <div v-if="!fetchDataDisabled || plotDataRaw" class="flex-1 h-full">
       <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1', base: 'h-full' }, base: 'h-full' }">
         <div :id="plotlyDivId" class="h-full"></div>
 

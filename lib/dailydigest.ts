@@ -10,6 +10,10 @@ export function split_data_freq(resp: DailyDigestResp, gamma: number=0.5) {
   let nChans = data[0].stokes_i.length
   let counter = 0
 
+  if(gamma<0 || gamma==undefined){
+    gamma=0.5
+  }
+
   for (let ifreq = 0; ifreq < nCFreqs; ifreq++) {
     //console.log(ifreq)
     let cfreq = stats[ifreq].cfreq
