@@ -102,19 +102,27 @@ async def get_imaging_sessions(
             epic_img_metadata.chan_bw_hz,
         )
         .where(
-            func.tsrange(window.start_time, window.end_time, "[]").op("&&")(
-                func.tsrange(
-                    epic_img_metadata.session_start,
-                    epic_img_metadata.session_end,
-                    "[]",
+            func.upper(
+                func.tsrange(window.start_time, window.end_time, "[]").op("*")(
+                    func.tsrange(
+                        epic_img_metadata.session_start,
+                        epic_img_metadata.session_end,
+                        "[]",
+                    )
                 )
             )
-        )
-        .where(
-            (epic_img_metadata.session_end - epic_img_metadata.session_start)
+            - func.lower(
+                func.tsrange(window.start_time, window.end_time, "[]").op("*")(
+                    func.tsrange(
+                        epic_img_metadata.session_start,
+                        epic_img_metadata.session_end,
+                        "[]",
+                    )
+                )
+            )
             >= text("INTERVAL '30 MINUTES'")
         )
-        .where(epic_img_metadata.chan0==func.any_(settings.OBS_CHANS))
+        .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .distinct()
         .order_by(epic_img_metadata.chan0.desc())
     )
@@ -157,8 +165,10 @@ async def get_daily_digest(
 ):
     stmnt = (
         select(
-            epic_daily_digest_table.cfreq, func.count(epic_daily_digest_table.cfreq)
-        ).where(epic_daily_digest_table.source_name == digest_def.source_name)
+            epic_daily_digest_table.cfreq,
+            func.count(epic_daily_digest_table.cfreq),
+        )
+        .where(epic_daily_digest_table.source_name == digest_def.source_name)
         .where(epic_daily_digest_table.img_time >= digest_def.start_time)
         .where(epic_daily_digest_table.img_time <= digest_def.end_time)
         .where(epic_daily_digest_table.cfreq == func.any_(settings.CFREQS))
