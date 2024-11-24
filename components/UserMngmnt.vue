@@ -1,19 +1,19 @@
 <script setup lang="ts">
 const hanko = useHanko()
 var loggedIn = ref(false)
-var emailId = ref('')
+var emailId = ref<string|undefined>('')
 const route = useRoute()
 
 async function initUser() {
-  console.log('testing', hanko.session)
+  console.log('testing', hanko?.session)
   if (hanko!.session.isValid()) {
     loggedIn.value = true
     const { data: user } = await useAsyncData('user',
       async () => {
-        return hanko.user.getCurrent()
+        return hanko?.user.getCurrent()
       })
-    console.log(user.value.email.split('@')[0], loggedIn.value)
-    emailId = user.value.email.split('@')[0]
+    console.log(user?.value?.email.split('@')[0], loggedIn.value)
+    emailId.value = user?.value?.email.split('@')[0]
   }
   return 'success'
 }
