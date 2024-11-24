@@ -29,7 +29,7 @@ const links = [{
 
     <template #right>
       <!-- <UButton label="Sign in"  color="gray" to="/login" /> -->
-      <UserMngmnt></UserMngmnt>
+      <!-- <UserMngmnt></UserMngmnt> -->
     </template>
 
     <template #panel>
