@@ -16,3 +16,7 @@ cards:
     description: Analyse the data to detect pulsars using the PRESTO software.
     to: /waterfalls/presto
     #target: _self
+
+  - title: Daily Digest
+    description: Explore the long-integration spectrograms for all monitored sources.
+    to: /waterfalls/dailydigest
