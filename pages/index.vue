@@ -19,6 +19,32 @@ useSeoMeta({
     <ULandingHero
       :description="page.hero.description" :links="page.hero.links" >
       <div class="absolute inset-0 landing-grid z-[-1] [mask-image:radial-gradient(100%_100%_at_top_right,white,transparent)]" />
+      <template #headline>
+        <UBadge
+          variant="subtle"
+          size="lg"
+          class="relative rounded-full font-semibold"
+        >
+          <NuxtLink
+            to="/waterfalls/spectrograms/dailydigest"
+            target="_self"
+            class="focus:outline-none"
+            tabindex="-1"
+          >
+            <span
+              class="absolute inset-0"
+              aria-hidden="true"
+            />
+          </NuxtLink>
+
+          New: Daily Digest
+
+          <UIcon
+            name="i-heroicons-arrow-top-right-on-square-20-solid"
+            class="ml-1 w-4 h-4 pointer-events-none"
+          />
+        </UBadge>
+      </template>
       <template #title>
         A <span class="text-primary block lg:inline-block">real-time</span> view of the
         <br> 
