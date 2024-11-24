@@ -14,7 +14,8 @@ useHead({
   meta: [
     { charset: 'utf-8' },
     { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-    { key: 'theme-color', name: 'theme-color', content: color }
+    { key: 'theme-color', name: 'theme-color', content: color },
+    { name: "google-site-verification", content: "yjy61BTcmwKlPO4KVYb_a_PL9M50afpwRF5wpnwqPFw"}
   ],
   link: [
     { rel: 'icon', href: colorMode.value=='dark' ? '/favicon-dark.png' : '/favicon-light.png' }
