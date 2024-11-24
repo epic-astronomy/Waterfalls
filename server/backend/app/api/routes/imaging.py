@@ -146,7 +146,7 @@ async def get_spectrogram(
                 specgm_window.start_time, specgm_window.end_time
             )
         )
-        .where(epic_pixels.session_id == specgm_window.session_id)
+        .where(epic_pixels.chan0 == specgm_window.chan0)
         .where(epic_pixels.source_name == specgm_window.source_name)
         .where(
             func.cast(epic_pixels.pix_offset, TEXT)

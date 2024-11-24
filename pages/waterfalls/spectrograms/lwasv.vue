@@ -130,7 +130,8 @@ function fetchSpecgm(){
   specgmQuery.value = {
     start_time: specgmStart.value,
         end_time: specgmEnd.value,
-        session_id: imgSession.value.session_id,
+        // session_id: imgSession.value.session_id,
+        chan0: imgSession.value.chan0,
         source_name:  watchSource.value.source,
         pixel_positions: '(0,0)',
         n_chan:imgSession.value.n_chan,

@@ -128,11 +128,12 @@ class epic_pixels_base(SQLModel):
     pixel_values: bytes = Field(sa_column=Column(BYTEA))
 
 class epic_pixels(epic_pixels_base, table=True):
-    __tablename__ = "epic_pixels2"
+    __tablename__ = "epic_pixels"
     metadata = _metadata
 
-    # img_time: datetime
-    session_id: UUID = Field(primary_key=True)
+    img_time: datetime
+    chan0: int
+    # session_id: UUID = Field(primary_key=True)
     pixel_coord: tuple[int, int] = Field(
         sa_column=Column(PointType, primary_key=True)
     )
@@ -140,7 +141,7 @@ class epic_pixels(epic_pixels_base, table=True):
         sa_column=Column(PointType, primary_key=True)
     )
     pixel_coord: str
-    pixel_lm: tuple[int, int] = Field(sa_column=Column(PointType))
+    pixel_lm: tuple[float, float] = Field(sa_column=Column(PointType))
     # pixel_values: bytes
     source_name: str = Field(primary_key=True)
 

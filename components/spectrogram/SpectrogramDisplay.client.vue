@@ -177,7 +177,8 @@ const { pending, data: specgmDataBytes, error: error } = await useLazyAsyncData<
       query: {
         start_time: props.specgmQuery.start_time,
         end_time: props.specgmQuery.end_time,
-        session_id: props.specgmQuery.session_id,
+        // session_id: props.specgmQuery.session_id,
+        chan0: props.specgmQuery.chan0,
         source_name: props.specgmQuery.source_name,
         pixel_positions: props.specgmQuery.pixel_positions
       }

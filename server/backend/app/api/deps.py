@@ -29,7 +29,8 @@ class Pagination:
 class SpecgmWindowDef:
     start_time: datetime
     end_time: datetime
-    session_id: UUID
+    # session_id: UUID
+    chan0: int
     source_name: str
     pixel_positions: list[str]
 
@@ -75,7 +76,7 @@ async def validate_specgm_window(
     start_time: datetime,
     end_time: datetime,
     source_name: str,
-    session_id: UUID,
+    chan0: int,
     pixel_positions: str#list[str] | None #Annotated[list[str] | None]
 ) -> SpecgmWindowDef:
     _ = validate_obs_period(start_time, end_time, source_name)
@@ -91,7 +92,7 @@ async def validate_specgm_window(
     return SpecgmWindowDef(
         start_time=start_time,
         end_time=end_time,
-        session_id=session_id,
+        chan0=chan0,
         source_name=source_name,
         pixel_positions=pixel_positions
     )
