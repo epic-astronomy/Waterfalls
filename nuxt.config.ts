@@ -22,7 +22,7 @@ export default defineNuxtConfig({
   routeRules: {
     '/api/search.json': { prerender: true },
     '/docs': { redirect: '/docs/introduction', prerender: false },
-    '/api/v1/**': { proxy: { to: 'http://127.0.0.1:8000/api/v1/**' } }
+    '/api/v1/**': { proxy: { to: 'http://127.0.0.1:8001/api/v1/**' } }
   },
   runtimeConfig: {
     // Public keys that are exposed to the client
