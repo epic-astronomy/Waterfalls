@@ -28,7 +28,8 @@ export default defineNuxtConfig({
     icons: ['heroicons', 'simple-icons', 'material-symbols']
   },
   routeRules: {
-    '/api/search.json': { prerender: true },
+    // Revalidate the docs search index on every use so a rebuild is picked up immediately
+    '/api/search.json': { prerender: true, headers: { 'cache-control': 'no-cache' } },
     '/docs': { redirect: '/docs/introduction', prerender: false },
     '/api/v1/**': { proxy: { to: 'http://127.0.0.1:8000/api/v1/**' } }
   },
