@@ -10,12 +10,6 @@ const links = [{
 }, {
   label: 'Publications',
   to: '/publications'
-}, {
-  label: 'Members',
-  to: '/members'
-}, {
-  label: 'Blog',
-  to: '/blog'
 }]
 
 
