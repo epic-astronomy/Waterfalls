@@ -35,7 +35,9 @@ export default defineNuxtConfig({
   runtimeConfig: {
     // Public keys that are exposed to the client
     public: {
-      fastapiBase: process.env.NUXT_FAST_API_BASE || '/api/v1'
+      fastapiBase: process.env.NUXT_FAST_API_BASE || '/api/v1',
+      // Canonical origin used for canonical links, Open Graph URLs and the sitemap
+      siteUrl: process.env.NUXT_PUBLIC_SITE_URL || 'https://epic-astronomy.org'
     }
   },
   vite: {

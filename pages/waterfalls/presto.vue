@@ -2,6 +2,7 @@
 definePageMeta({
   layout: 'waterfalls'
 })
+useSeoMeta({ title: 'PRESTO', robots: 'noindex' })
 </script>
 
 

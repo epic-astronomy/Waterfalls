@@ -2,6 +2,7 @@
 definePageMeta({
   middleware: ['hanko-logged-in']
 })
+useSeoMeta({ robots: 'noindex, nofollow' })
 </script>
 <template>
   <hanko-profile class="center"/>

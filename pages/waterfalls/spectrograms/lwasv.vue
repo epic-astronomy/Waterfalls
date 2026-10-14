@@ -144,8 +144,8 @@ function fetchSpecgm(){
 useSeoMeta({
   title: 'Spectrograms @ LWA-Sevilleta',
   ogTitle:  'Spectrograms @ LWA-Sevilleta',
-  description: 'Explore spectrograms from the Long Wavelength Array, Sevilleta',
-  ogDescription: 'Explore spectrograms from the Long Wavelength Array, Sevilleta'
+  description: 'View and download 80 ms, 25 kHz spectrograms of radio sources imaged by EPIC at the Long Wavelength Array station in Sevilleta, New Mexico.',
+  ogDescription: 'View and download 80 ms, 25 kHz spectrograms of radio sources imaged by EPIC at the Long Wavelength Array station in Sevilleta, New Mexico.'
 })
 </script>
 <template>

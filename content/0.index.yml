@@ -1,8 +1,8 @@
 title: 'A Real-Time View of the Radio Universe'
-description: 'Leveraging the E-field Parallel Imaging Correlator (EPIC) algorithm, the EPIC Astronomy group creates and uses real-time imaging tools to detect and analyse transient phoenomena in the low-frequency radio sky.'
+description: 'Real-time all-sky radio imaging with the E-field Parallel Imaging Correlator (EPIC) on the Long Wavelength Array: live sky video, spectrograms and documentation.'
 navigation: false
 hero:
-  description: Leveraging the E-field Parallel Imaging Correlator (EPIC) algorithm, we build and use real-time imaging tools to detect and analyse transient phoenomena in the low-frequency radio sky. Live stream 25 FPS multi-frequency all-sky views from the Long Wavelength Array in Sevilleta, New Mexico. Explore and download the spectrograms of radio transients.
+  description: Leveraging the E-field Parallel Imaging Correlator (EPIC) algorithm, we build and use real-time imaging tools to detect and analyse transient phenomena in the low-frequency radio sky. Live stream 25 FPS multi-frequency all-sky views from the Long Wavelength Array in Sevilleta, New Mexico. Explore and download the spectrograms of radio transients.
   links:
     - label: Learn more
       icon: i-heroicons-arrow-right-20-solid
