@@ -13,6 +13,14 @@ export default defineNuxtConfig({
   colorMode: {
     preference: 'dark',
   },
+  css: ['katex/dist/katex.min.css', '~/assets/css/epic-figures.css'],
+  content: {
+    markdown: {
+      // LaTeX math in the docs: $inline$ and $$display$$
+      remarkPlugins: ['remark-math'],
+      rehypePlugins: { 'rehype-katex': { output: 'html' } }
+    }
+  },
   hanko: {
     apiURL: process.env.NUXT_PUBLIC_HANKO_API_URL
   },
