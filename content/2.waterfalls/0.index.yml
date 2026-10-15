@@ -12,11 +12,10 @@ cards:
     to: /waterfalls/spectrograms/lwasv
     #target: _self
 
-  - title: PRESTO @LWA-SV
-    description: Analyse the data to detect pulsars using the PRESTO software.
-    to: /waterfalls/presto
-    #target: _self
+  - title: FRB Events
+    description: Dedispersed spectrograms and the dispersion measure search of every CHIME/FRB event watched at LWA-SV.
+    to: /waterfalls/spectrograms/frb
 
   - title: Daily Digest
     description: Explore the long-integration spectrograms for all monitored sources.
-    to: /waterfalls/dailydigest
+    to: /waterfalls/spectrograms/dailydigest

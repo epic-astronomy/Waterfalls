@@ -40,16 +40,6 @@ const links = [{
     text: 'Settings',
     shortcuts: ['G', 'S']
   }
-}, {
-  id: 'presto',
-  label: 'Presto',
-  icon: 'i-material-symbols-query-stats',
-  to: '/waterfalls/presto',
-  badge: 'Coming soon',
-  tooltip: {
-    text: 'Presto',
-    shortcuts: ['P']
-  }
 }]
 
 const footerLinks = [{

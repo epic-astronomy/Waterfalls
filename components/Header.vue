@@ -8,6 +8,9 @@ const links = [{
   label: 'Docs',
   to: '/docs'
 }, {
+  label: 'Waterfalls',
+  to: '/waterfalls'
+}, {
   label: 'Publications',
   to: '/publications'
 }]
