@@ -2,6 +2,7 @@
 import { format } from 'date-fns';
 import type { DailyDigestSrc, DailyDigestSrcConfig, DailyDigestData, DailyDigestResp, DailyDigestTraceData } from '~/types';
 import * as digestUtils from '~/lib/dailydigest'
+import { CHAN_BW_HZ } from '~/lib/ndp'
 import { v4 as uuidv4 } from "uuid"
 import Plotly from 'plotly.js-dist-min'
 
@@ -14,7 +15,7 @@ const rtConfig = useRuntimeConfig()
 
 const digestDay = ref()
 const selectedSrc = ref('')
-const chan_bw_hz = ref(50000)
+const chan_bw_hz = ref(2 * CHAN_BW_HZ)
 const obsEnd = format((new Date().toISOString().slice(0, -1)), 'yyyy-MM-dd') // would be the current day in UTC
 const selectedSrcConfigs = ref<{ [source: string]: number[] }>({}) // stores the observed frequencies for each source
 const sourceNames = ref<String[]>([])
@@ -153,7 +154,7 @@ const plotlyAxes = reactive({
 var plotlyHTMLElement
 var plotlyLayout = computed(() => {
   // if (!selectedCfreq.value) return
-  let nChans = 128 * 25000 / chan_bw_hz.value
+  let nChans = Math.round(128 * CHAN_BW_HZ / chan_bw_hz.value)
   return {
     title: {
       text: selectedSrc.value + ' | LWA-Sevilleta',

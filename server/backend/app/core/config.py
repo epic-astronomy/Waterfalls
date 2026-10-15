@@ -37,8 +37,12 @@ class Settings(BaseSettings):
     DOMAIN: str = "localhost"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     WATCHLIST_MAX_ROWS_PER_PAGE: int = 25
-    OBS_CHANS: List[int] = [1128 + i*132 for i in range(6)] + [2604 + i*132 for i in range(6)]
-    CFREQS: List[int] = [(1128+ i*132+31)*25000  for i in range(6)] + [(2604 + i*132+31)*25000 for i in range(6)]
+    # NDP F-engine channel width (FS / 8192) and the first channel of each
+    # imager band (epic4, epic1, epic5, epic2, epic6, epic3)
+    CHAN_BW_HZ: float = 196e6 / 8192
+    OBS_CHANS: List[int] = [672, 864, 1440, 2400, 2976, 3168]
+    # daily digest cfreq = (chan0 + DIGEST_CHAN_OFFSET) * CHAN_BW_HZ
+    DIGEST_CHAN_OFFSET: int = 31
 
     @computed_field  # type: ignore[misc]
     @property

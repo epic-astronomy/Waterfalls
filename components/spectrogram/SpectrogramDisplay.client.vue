@@ -2,6 +2,7 @@
 import type { PropType } from 'vue';
 import type { SpecgmData, SpecgmQuery } from '~/types'
 import * as specUtils from '~/lib/spectrogram'
+import { CHAN_BW_HZ } from '~/lib/ndp'
 import Plotly from 'plotly.js-dist-min'
 import { v4 as uuidv4 } from "uuid"
 
@@ -38,7 +39,7 @@ watch(()=>props.specgmQuery.start_chan,(n,o)=>{
   for (let i = 0; i < props.specgmQuery.n_chan; ++i) {
     opts.push({
       id: i,
-      label: (props.specgmQuery.start_chan * 0.025 + i * props.specgmQuery.chan_bw_hz / 1e6).toFixed(3) + ' MHz'
+      label: (props.specgmQuery.start_chan * CHAN_BW_HZ / 1e6 + i * props.specgmQuery.chan_bw_hz / 1e6).toFixed(3) + ' MHz'
     })
   }
   flagChansOptions.value = opts
@@ -76,7 +77,7 @@ var plotlyLayout = computed(() => {
   if (!props.specgmQuery) return {}
   return {
     title: {
-      text: props.specgmQuery.source_name +' - '+ (startChan.value * 0.025 + nChans.value * chanBwHz.value/2/1e6).toFixed(2) + ' MHz | LWA-Sevilleta',
+      text: props.specgmQuery.source_name +' - '+ (startChan.value * CHAN_BW_HZ / 1e6 + nChans.value * chanBwHz.value/2/1e6).toFixed(2) + ' MHz | LWA-Sevilleta',
       font: {
         family: 'Courier New, monospace',
         size: 24,
@@ -291,7 +292,7 @@ watch(() => specgmDataBytes.value, (newData, _) => {
 
   plotlyAxes.yLabels = new Array(nChans.value)
   for (let i = 0; i < nChans.value; ++i) {
-    plotlyAxes.yLabels[i] = (startChan.value) * 0.025 + i * chanBwHz.value / 1e6
+    plotlyAxes.yLabels[i] = (startChan.value) * CHAN_BW_HZ / 1e6 + i * chanBwHz.value / 1e6
   }
 
 

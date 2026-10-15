@@ -3,6 +3,7 @@
 import type { PropType } from 'vue';
 import type { ImgSessionItem, ImgSessions, SessionQuery } from '~/types'
 import humanizeDuration from 'humanize-duration'
+import { CHAN_BW_HZ } from '~/lib/ndp'
 const toast = useToast()
 const rtConfig = useRuntimeConfig()
 const selectedSession = defineModel({
@@ -131,7 +132,7 @@ const tableData = computed(() => {
       </template>
 
       <template #chan0-data="{row}">
-        {{ row.chan0 * 25000/1e6 }}
+        {{ (row.chan0 * CHAN_BW_HZ / 1e6).toFixed(3) }}
       </template>
 
       <template #chan_bw_hz-data="{row}">

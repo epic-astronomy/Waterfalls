@@ -28,6 +28,12 @@ from app.models.epic_data import (
 router = APIRouter()
 from app.core.config import settings
 
+# cfreq is stored as real, so match bands on the recovered first channel
+digest_chan0 = (
+    func.round(epic_daily_digest_table.cfreq / settings.CHAN_BW_HZ)
+    - settings.DIGEST_CHAN_OFFSET
+)
+
 
 @router.get("/sessions/", response_model=epic_img_session_public)
 async def get_imaging_sessions(
@@ -171,7 +177,7 @@ async def get_daily_digest(
         .where(epic_daily_digest_table.source_name == digest_def.source_name)
         .where(epic_daily_digest_table.img_time >= digest_def.start_time)
         .where(epic_daily_digest_table.img_time <= digest_def.end_time)
-        .where(epic_daily_digest_table.cfreq == func.any_(settings.CFREQS))
+        .where(digest_chan0 == func.any_(settings.OBS_CHANS))
         .group_by(epic_daily_digest_table.cfreq)
         .order_by(epic_daily_digest_table.cfreq.desc())
     )
@@ -186,7 +192,7 @@ async def get_daily_digest(
         .where(epic_daily_digest_table.source_name == digest_def.source_name)
         .where(epic_daily_digest_table.img_time >= digest_def.start_time)
         .where(epic_daily_digest_table.img_time <= digest_def.end_time)
-        .where(epic_daily_digest_table.cfreq == func.any_(settings.CFREQS))
+        .where(digest_chan0 == func.any_(settings.OBS_CHANS))
         .order_by(
             epic_daily_digest_table.cfreq.desc(),
             epic_daily_digest_table.img_time.asc(),

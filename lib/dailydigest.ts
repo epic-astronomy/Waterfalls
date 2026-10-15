@@ -1,4 +1,5 @@
 import type { DailyDigestData, DailyDigestResp, DailyDigestTraceData } from '~/types';
+import { CHAN_BW_HZ, DIGEST_CHAN_OFFSET } from '~/lib/ndp';
 
 export function split_data_freq(resp: DailyDigestResp, gamma: number=0.5) {
   var out: { [cfreq: number]: DailyDigestTraceData } = {}
@@ -30,10 +31,11 @@ export function split_data_freq(resp: DailyDigestResp, gamma: number=0.5) {
       stokes_V.push(new Float32Array(nEpochs))
     }
 
-    let chan0 = cfreq/25000-31 // assuming 64 channels
+    let chan0 = Math.round(cfreq / CHAN_BW_HZ) - DIGEST_CHAN_OFFSET
 
+    // the digest holds pairs of channels averaged together
     for (let i = 0; i < nChans; ++i) {
-      freqs.push(chan0 * 0.025 + i * 0.05)
+      freqs.push((chan0 + 2 * i) * CHAN_BW_HZ / 1e6)
     }
 
     for (let i = counter; i < counter+nEpochs; i++) {
