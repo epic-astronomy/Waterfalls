@@ -76,6 +76,7 @@ const xLabels = ref(Array<string>())
 const yLabels = ref(Array<number>())
 const plotlyDivId = `plotly-${uuidv4()}`
 const plotlyDiv = ref<HTMLElement>()
+const noData = ref(false)
 var plotlyHTMLElement
 var plotlyLayout = computed(() => {
   if (!props.specgmQuery) return {}
@@ -315,6 +316,13 @@ watch(() => specgmDataBytes.value, (newData, _) => {
 
   console.log('change in data')
   if (!newData) return
+  noData.value = newData.length == 0
+  if (noData.value) {
+    // drop the previous window's plot rather than leave it on screen
+    xx_data = []; yy_data = []; stokes_I = []; plotDataRaw = []
+    if (plotlyDiv.value) Plotly.purge(plotlyDiv.value)
+    return
+  }
   raw_data = new Array<Float32Array>()
   for (let i = 0; i < newData.length; ++i) {
     raw_data.push(specUtils.base64ToFloat32Array(newData[i].pixel_values))
@@ -433,6 +441,7 @@ onBeforeUnmount(() => {
 
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
       <UProgress v-if="pending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
+      <p v-if="noData && !pending" class="p-4 text-sm text-gray-500 dark:text-gray-400">No images of the source were stored in this window.</p>
       <div :id="plotlyDivId" ref="plotlyDiv"></div>
     
     </UCard>

@@ -130,6 +130,12 @@ const fetchSpecgmDisabled = computed(() => {
   return false
 })
 
+function clearSpecgmWindow() {
+  specgmStart.value = ''
+  specgmEnd.value = ''
+  specgmQuery.value = undefined
+}
+
 function selectSpecgmWindow(start: string, end: string) {
   specgmStart.value = start
   specgmEnd.value = end
@@ -276,7 +282,7 @@ useSeoMeta({
           </UCard>
           <SpectrogramFrbTimeline v-if="isFrb" class="m-2"
             :watch-source="watchSource" :img-session="imgSession" :window-start="specgmStart" :window-end="specgmEnd"
-            @select="selectSpecgmWindow" />
+            @select="selectSpecgmWindow" @clear="clearSpecgmWindow" />
           <SpectrogramDisplay v-if="specgmQuery" :specgm-query="specgmQuery" :frb="frb"></SpectrogramDisplay>
         </div>
         <div v-else="imgSession">

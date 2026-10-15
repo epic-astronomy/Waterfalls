@@ -27,6 +27,9 @@ const links = [{
   },{
     label:'Daily Digest',
     to: '/waterfalls/spectrograms/dailydigest'
+  }, {
+    label: 'FRB events',
+    to: '/waterfalls/spectrograms/frb'
   }
     // ,{
     //   label:'Plotly test',

@@ -1,0 +1,311 @@
+<script setup lang="ts">
+import Plotly from 'plotly.js-dist-min'
+
+// Dedispersed view of a CHIME/FRB watch across every imaging band. Each
+// channel is shifted by its dispersion delay at the CHIME DM, so a burst at
+// that DM sits at 0 s in every channel and band. Products are precomputed by
+// the backend when a watch ends.
+
+interface FrbEventItem {
+  id: number, source: string, event_time: string, t_start: string, t_end: string,
+  watch_status: string, n_bands: number, max_snr: number | null, computed_at: string | null,
+  dm: number | null, dm_err: number | null
+}
+interface FrbBand {
+  chan0: number, status: string, note: string | null, f_lo_mhz: number, chan_bw_hz: number,
+  n_chan: number, dt_s: number, t0_rel_s: number, n_time: number, smear_s: number,
+  on_half_s: number, coverage: number | null, flagged: number[] | null, z_image: string | null,
+  timeseries: string | null, peak_snr: number | null, peak_width_s: number | null,
+  peak_t_s: number | null, created_at: string
+}
+interface FrbEventProducts {
+  id: number, source: string, t_inf: string, t_start: string, t_end: string,
+  dm: number, dm_err: number, computed: boolean, bands: FrbBand[]
+}
+
+const rtConfig = useRuntimeConfig()
+const route = useRoute()
+const router = useRouter()
+const colorMode = useColorMode()
+const dark = computed(() => colorMode.value == 'dark')
+
+const K_DM = 4148.808
+
+const { data: events, pending: eventsPending } = await useLazyAsyncData<FrbEventItem[]>(
+  'frb-events', () => $fetch(rtConfig.public.fastapiBase + '/frb/events/'), { default: () => [] })
+
+const selectedId = ref<number | null>(Number(route.query.event) || null)
+watch(events, (evs) => {
+  if (!selectedId.value && evs?.length) selectedId.value = evs[0].id
+}, { immediate: true })
+watch(selectedId, id => router.replace({ query: { ...route.query, event: id ?? undefined } }))
+
+const { data: product, pending: productPending } = await useLazyAsyncData<FrbEventProducts | null>(
+  'frb-event',
+  () => selectedId.value ? $fetch(rtConfig.public.fastapiBase + `/frb/events/${selectedId.value}`) : Promise.resolve(null),
+  { watch: [selectedId], default: () => null }
+)
+
+const eventRows = computed(() => (events.value ?? []).map(e => ({
+  ...e,
+  dm_text: e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '',
+  snr_text: e.max_snr != null ? e.max_snr.toFixed(1) : '',
+  products: e.computed_at ? `${e.n_bands} band${e.n_bands == 1 ? '' : 's'}` : (e.watch_status == 'watching' ? 'Watching' : 'Pending'),
+  class: e.id == selectedId.value ? 'bg-primary-50 dark:bg-primary-900/30' : ''
+})))
+const eventColumns = [
+  { key: 'source', label: 'Event' },
+  { key: 'event_time', label: 'Trigger (UTC)' },
+  { key: 'dm_text', label: 'DM (pc cm⁻³)' },
+  { key: 'products', label: 'Products' },
+  { key: 'snr_text', label: 'Peak S/N' }
+]
+
+function b64ToF32(b64: string) {
+  const bin = atob(b64)
+  const u8 = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
+  return new Float32Array(u8.buffer)
+}
+
+const utcText = (t: string | Date) => new Date(String(t).replace(/Z?$/, 'Z')).toISOString().replace('T', ' ').slice(0, 19)
+const bandRange = (b: FrbBand) => `${(b.f_lo_mhz + b.n_chan * b.chan_bw_hz / 1e6).toFixed(2)}–${b.f_lo_mhz.toFixed(2)} MHz`
+
+// Bands with data, highest frequency first, decoded once
+const bands = computed(() => {
+  const p = product.value
+  if (!p) return []
+  return p.bands.filter(b => b.status == 'ok' && b.z_image && b.timeseries).map(b => {
+    const img = b64ToF32(b.z_image!)
+    const rel = Array.from({ length: b.n_time }, (_, k) => b.t0_rel_s + k * b.dt_s)
+    const freqs = Array.from({ length: b.n_chan }, (_, c) => b.f_lo_mhz + (c + 0.5) * b.chan_bw_hz / 1e6)
+    const z = Array.from({ length: b.n_chan }, (_, c) => Array.from(img.subarray(c * b.n_time, (c + 1) * b.n_time)))
+    return { ...b, rel, freqs, z, ts: b64ToF32(b.timeseries!) }
+  }).sort((a, b) => b.f_lo_mhz - a.f_lo_mhz)
+})
+
+const summary = computed(() => {
+  const p = product.value
+  if (!p) return []
+  return [...p.bands].sort((a, b) => b.f_lo_mhz - a.f_lo_mhz).map(b => {
+    const fMid = b.f_lo_mhz + b.n_chan * b.chan_bw_hz / 2e6
+    const arrival = new Date(new Date(p.t_inf + 'Z').getTime() + 1e3 * K_DM * p.dm / fMid ** 2)
+    return {
+      band: bandRange(b),
+      arrival: arrival.toISOString().slice(11, 19),
+      smear: b.smear_s != null ? `${b.smear_s.toFixed(1)} s` : '',
+      coverage: b.status == 'ok' && b.coverage != null ? `${Math.round(100 * b.coverage)}%` : '',
+      flagged: b.status == 'ok' ? `${b.flagged?.length ?? 0} / ${b.n_chan}` : '',
+      peak: b.peak_snr != null ? `${b.peak_snr.toFixed(1)} at ${b.peak_t_s!.toFixed(1)} s, ${b.peak_width_s!.toFixed(2)} s wide` : '',
+      status: b.status == 'ok' ? 'Data' : (b.note ?? b.status)
+    }
+  })
+})
+const summaryColumns = [
+  { key: 'band', label: 'Band' },
+  { key: 'arrival', label: 'Expected arrival (UTC)' },
+  { key: 'smear', label: 'Smearing' },
+  { key: 'coverage', label: 'Coverage' },
+  { key: 'flagged', label: 'Flagged channels' },
+  { key: 'peak', label: 'Peak S/N (search window)' },
+  { key: 'status', label: 'Status' }
+]
+
+// Display controls
+const zMax = ref(5)
+const zMaxOptions = [{ label: 'S/N −2 to 3', value: 3 }, { label: 'S/N −2 to 5', value: 5 }, { label: 'S/N −2 to 8', value: 8 }]
+const smoothS = ref(0)
+const smoothOptions = [{ label: 'None', value: 0 }, { label: '0.5 s', value: 0.5 }, { label: '1 s', value: 1 }, { label: '4 s', value: 4 }, { label: '16 s', value: 16 }]
+const zoomS = ref(0)
+const zoomOptions = [{ label: 'Full window', value: 0 }, { label: '±60 s', value: 60 }, { label: '±20 s', value: 20 }, { label: '±5 s', value: 5 }]
+
+// Boxcar-smoothed time series, rescaled to S/N with the off-window samples
+function smoothed(b: (typeof bands.value)[number]) {
+  const w = Math.max(1, Math.round(smoothS.value / b.dt_s))
+  const n = b.ts.length
+  const out = new Float32Array(n).fill(NaN)
+  let sum = 0, cnt = 0
+  for (let i = 0; i < n + Math.floor(w / 2); i++) {
+    if (i < n && isFinite(b.ts[i])) { sum += b.ts[i]; cnt++ }
+    const drop = i - w
+    if (drop >= 0 && isFinite(b.ts[drop])) { sum -= b.ts[drop]; cnt-- }
+    const c = i - Math.floor(w / 2)
+    if (c >= 0 && c < n && cnt >= w / 2) out[c] = sum / cnt
+  }
+  if (w == 1) return Array.from(out)
+  const off = Array.from(out).filter((v, i) => isFinite(v) && Math.abs(b.rel[i]) > b.on_half_s).sort((x, y) => x - y)
+  const med = off[Math.floor(off.length / 2)] ?? 0
+  const dev = off.map(v => Math.abs(v - med)).sort((x, y) => x - y)
+  const sig = 1.4826 * (dev[Math.floor(dev.length / 2)] ?? 1) || 1
+  return Array.from(out, v => (v - med) / sig)
+}
+
+const ink = computed(() => dark.value ? '#e5e7eb' : '#1f2937')
+const muted = computed(() => dark.value ? '#9ca3af' : '#6b7280')
+const grid = computed(() => dark.value ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')
+const paper = computed(() => dark.value ? '#131826' : '#ffffff')
+
+// One row per band with its own axes, sharing the relative time scale
+function stackedLayout(n: number, rowHeight: number, yTitle: (b: (typeof bands.value)[number]) => string, shade = false) {
+  const gap = 0.35 / Math.max(n, 1) / 2
+  const layout: Record<string, any> = {
+    height: n * rowHeight + 90, margin: { l: 70, r: 20, t: 20, b: 60 },
+    paper_bgcolor: paper.value, plot_bgcolor: paper.value, hovermode: false, showlegend: false,
+    font: { family: 'Courier New, monospace', color: ink.value, size: 12 }, shapes: [], annotations: []
+  }
+  bands.value.forEach((b, i) => {
+    const s = i == 0 ? '' : String(i + 1)
+    const top = 1 - i / n
+    const halfX = zoomS.value || -b.rel[0]
+    layout[`xaxis${s}`] = {
+      anchor: `y${s}`, range: [-halfX, halfX], gridcolor: grid.value, zeroline: false,
+      showticklabels: true, tickfont: { color: muted.value },
+      title: i == n - 1 ? { text: 'Time relative to the dispersed arrival (s)', font: { color: ink.value } } : undefined
+    }
+    layout[`yaxis${s}`] = {
+      anchor: `x${s}`, domain: [top - 1 / n + gap, top - gap], gridcolor: grid.value, zeroline: false,
+      tickfont: { color: muted.value }, title: { text: yTitle(b), font: { color: muted.value, size: 11 } }
+    }
+    layout.annotations.push({
+      xref: 'paper', yref: 'paper', x: 0, y: top - gap, xanchor: 'left', yanchor: 'bottom', showarrow: false,
+      text: `${bandRange(b)} · smearing ${b.smear_s.toFixed(1)} s`, font: { color: ink.value, size: 12 }
+    })
+    // the search window: shaded behind a time series, outlined over an image
+    if (shade) {
+      layout.shapes.push({
+        type: 'rect', xref: `x${s}`, yref: `y${s} domain`, x0: -b.on_half_s, x1: b.on_half_s, y0: 0, y1: 1,
+        fillcolor: 'rgba(245,158,11,0.14)', line: { width: 0 }, layer: 'below'
+      })
+    } else {
+      for (const x of [-b.on_half_s, b.on_half_s]) {
+        layout.shapes.push({
+          type: 'line', xref: `x${s}`, yref: `y${s} domain`, x0: x, x1: x, y0: 0, y1: 1,
+          line: { color: dark.value ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)', width: 1.5, dash: 'dash' }
+        })
+      }
+    }
+  })
+  return layout
+}
+
+const imageDiv = ref<HTMLElement>()
+const seriesDiv = ref<HTMLElement>()
+
+function drawImage() {
+  const el = imageDiv.value
+  if (!el || !el.clientWidth || !bands.value.length) return
+  const traces = bands.value.map((b, i) => ({
+    type: 'heatmap', x: b.rel, y: b.freqs, z: b.z, coloraxis: 'coloraxis',
+    xaxis: `x${i == 0 ? '' : i + 1}`, yaxis: `y${i == 0 ? '' : i + 1}`, hoverongaps: false
+  }))
+  const layout = stackedLayout(bands.value.length, 170, () => 'MHz')
+  layout.coloraxis = {
+    colorscale: 'Viridis', cmin: -2, cmax: zMax.value,
+    colorbar: { title: { text: 'S/N', side: 'right', font: { color: ink.value } }, tickfont: { color: muted.value }, thickness: 12, len: 0.6 }
+  }
+  Plotly.react(el, traces, layout, { displaylogo: false, responsive: true })
+}
+
+function drawSeries() {
+  const el = seriesDiv.value
+  if (!el || !el.clientWidth || !bands.value.length) return
+  const traces: any[] = []
+  bands.value.forEach((b, i) => {
+    const s = i == 0 ? '' : String(i + 1)
+    traces.push({
+      type: 'scatter', mode: 'lines', x: b.rel, y: smoothed(b), xaxis: `x${s}`, yaxis: `y${s}`,
+      line: { width: 1, color: dark.value ? '#93c5fd' : '#1d4ed8' }
+    })
+    if (b.peak_snr != null && b.peak_t_s != null) {
+      traces.push({
+        type: 'scatter', mode: 'markers', x: [b.peak_t_s], y: [b.peak_snr], xaxis: `x${s}`, yaxis: `y${s}`,
+        marker: { size: 9, color: '#f59e0b', line: { width: 2, color: paper.value } }
+      })
+    }
+  })
+  const layout = stackedLayout(bands.value.length, 120, () => 'S/N', true)
+  bands.value.forEach((b, i) => {
+    if (b.peak_snr == null) return
+    layout.annotations.push({
+      xref: 'paper', yref: 'paper', x: 1, y: 1 - i / bands.value.length - 0.35 / bands.value.length / 2,
+      xanchor: 'right', yanchor: 'bottom', showarrow: false, font: { color: muted.value, size: 11 },
+      text: `best boxcar S/N ${b.peak_snr.toFixed(1)} at ${b.peak_t_s!.toFixed(1)} s`
+    })
+  })
+  Plotly.react(el, traces, layout, { displaylogo: false, responsive: true })
+}
+
+function drawAll() {
+  drawImage()
+  drawSeries()
+}
+
+watch([bands, zMax, zoomS, dark], drawImage)
+watch([bands, smoothS, zoomS, dark], drawSeries)
+
+// The divs are created after this client-only component mounts, so observe
+// them when they appear and draw once they have a width
+const observer = import.meta.client ? new ResizeObserver(() => drawAll()) : null
+watch([imageDiv, seriesDiv], (els, old) => {
+  old?.forEach(e => e && observer?.unobserve(e))
+  els.forEach(e => e && observer?.observe(e))
+}, { immediate: true })
+onBeforeUnmount(() => observer?.disconnect())
+
+const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.status != 'ok'))
+</script>
+
+<template>
+  <UDashboardNavbar title="FRB events - Long Wavelength Array, Sevilleta"></UDashboardNavbar>
+  <UDashboardPanelContent>
+    <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }" class="relative">
+      <UProgress v-if="eventsPending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
+      <UTable :rows="eventRows" :columns="eventColumns" :loading="eventsPending"
+        :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No CHIME/FRB events have been watched.' }"
+        @select="(row: FrbEventItem) => selectedId = row.id">
+        <template #event_time-data="{ row }">{{ utcText(row.event_time) }}</template>
+      </UTable>
+    </UCard>
+
+    <UCard v-if="product" :ui="{ body: { padding: 'px-3 py-3 sm:p-4' } }" class="mt-2 relative">
+      <UProgress v-if="productPending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="text-xl font-semibold">{{ product.source }}</h2>
+        <span class="text-sm text-gray-500 dark:text-gray-400">
+          DM {{ product.dm.toFixed(2) }} ± {{ product.dm_err.toFixed(2) }} pc cm⁻³ ·
+          arrival at infinite frequency {{ utcText(product.t_inf) }} UTC ·
+          watched until {{ utcText(product.t_end) }} UTC
+        </span>
+      </div>
+      <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+        Every channel is shifted by its dispersion delay at the CHIME DM, so a burst at that DM lines up at 0 s in all
+        channels and bands. Undispersed broadband signals are removed first (zero-DM filter). Each channel is then
+        detrended and expressed in S/N using the samples outside the search window. The search window, marked by the
+        dashed lines and the shading, spans half the smearing within a channel, three times the arrival uncertainty
+        from the DM error, and a further 2 s. Channels dominated by RFI are blanked.
+      </p>
+      <UTable :rows="summary" :columns="summaryColumns" class="mt-3" :ui="{ td: { base: 'whitespace-normal' } }" />
+      <UAlert v-if="!product.computed" class="mt-3" color="amber" variant="soft" icon="i-heroicons-clock"
+        title="The products of this event have not been computed yet. They are made within 10 minutes of the watch ending." />
+    </UCard>
+
+    <template v-if="bands.length">
+      <UCard :ui="{ body: { padding: 'px-3 py-2 sm:px-4' } }" class="mt-2">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <div class="flex items-center gap-2"><span>Window</span><USelect v-model="zoomS" :options="zoomOptions" option-attribute="label" /></div>
+          <div class="flex items-center gap-2"><span>Colour range</span><USelect v-model="zMax" :options="zMaxOptions" option-attribute="label" /></div>
+          <div class="flex items-center gap-2"><span>Time series smoothing</span><USelect v-model="smoothS" :options="smoothOptions" option-attribute="label" /></div>
+        </div>
+      </UCard>
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="mt-2">
+        <div class="px-2 pt-1 text-sm font-medium">Dedispersed spectrograms</div>
+        <div ref="imageDiv" class="w-full"></div>
+      </UCard>
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="mt-2">
+        <div class="px-2 pt-1 text-sm font-medium">Band-averaged time series</div>
+        <div ref="seriesDiv" class="w-full"></div>
+      </UCard>
+    </template>
+    <UCard v-else-if="product?.computed && !noDataBands.length" class="mt-2">No band has data for this event.</UCard>
+  </UDashboardPanelContent>
+</template>

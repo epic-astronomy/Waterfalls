@@ -6,6 +6,7 @@ fastapi @ file:///home/conda/feedstock_root/build_artifacts/fastapi_171254101013
 greenlet @ file:///home/conda/feedstock_root/build_artifacts/greenlet_1703201576006/work
 h11 @ file:///home/conda/feedstock_root/build_artifacts/h11_1664132893548/work
 httptools==0.6.1
+numpy==1.26.4
 idna @ file:///home/conda/feedstock_root/build_artifacts/idna_1713279365350/work
 psycopg2 @ file:///home/conda/feedstock_root/build_artifacts/psycopg2-split_1701737488821/work
 psycopg2-binary @ file:///home/conda/feedstock_root/build_artifacts/psycopg2-split_1701737547976/work/psycopg2-binary

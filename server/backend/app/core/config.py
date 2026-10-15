@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # CHIME/FRB watches last until the burst has crossed the lowest imaged
     # frequency, times this margin
     CHIME_WATCH_MARGIN: float = 1.2
+    # dedispersed FRB products: rescan interval and how far back to look
+    FRB_PRODUCTS_SCAN_S: int = 600
+    FRB_PRODUCTS_MAX_AGE_DAYS: int = 30
+    FRB_PRODUCTS_ENABLED: bool = True
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)

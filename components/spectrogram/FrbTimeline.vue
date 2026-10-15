@@ -14,7 +14,7 @@ const props = defineProps({
   windowStart: { type: String, default: '' },
   windowEnd: { type: String, default: '' }
 })
-const emit = defineEmits<{ select: [start: string, end: string] }>()
+const emit = defineEmits<{ select: [start: string, end: string], clear: [] }>()
 
 const rtConfig = useRuntimeConfig()
 
@@ -133,10 +133,13 @@ const sessionCells = computed(() => rows.value.flatMap(r => r.cells).filter(c =>
 
 const select = (c: { t0: number, t1: number }) => emit('select', isoUtc(c.t0), isoUtc(c.t1))
 
-// Open each session on the first cell the burst reaches, or its first cell
+// Open each session on the first cell the burst reaches. When it never
+// reaches this band during the session there is nothing to show until a cell
+// is picked, so clear the previous spectrogram.
 watch(() => props.imgSession.session_id, () => {
-  const c = sessionCells.value.find(c => c.inBurst) ?? sessionCells.value[0]
+  const c = sessionCells.value.find(c => c.inBurst)
   if (c) select(c)
+  else emit('clear')
 }, { immediate: true })
 
 // Left and right arrows step through the cells
@@ -157,9 +160,9 @@ const burstNote = computed(() => {
   const p = frb.value
   const b = burst.value
   if (!p || !b) return 'No DM in the VOEvent, so the burst arrival cannot be marked.'
-  const sweep = `DM ${p.dm.toFixed(1)} ± ${p.dmErr.toFixed(1)} pc cm⁻³: the burst crosses ${band.value.fHi.toFixed(2)}–${band.value.fLo.toFixed(2)} MHz between ${hhmmss(b.start)} and ${hhmmss(b.end)} UTC`
-  if (b.end < session.value.start) return `${sweep}, before this session started.`
-  if (b.start > session.value.end) return `${sweep}, after this session ended.`
+  const sweep = `At DM ${p.dm.toFixed(1)} ± ${p.dmErr.toFixed(1)} pc cm⁻³ the burst crosses ${band.value.fHi.toFixed(2)}–${band.value.fLo.toFixed(2)} MHz between ${hhmmss(b.start)} and ${hhmmss(b.end)} UTC`
+  if (b.end < session.value.start) return `${sweep}, before this session started. Pick a cell to view the session.`
+  if (b.start > session.value.end) return `${sweep}, after this session ended. Pick a cell to view the session.`
   return `${sweep}.`
 })
 
@@ -184,7 +187,8 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
 <template>
   <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-sm">
-      <span>Session timeline, {{ CELL_S / 60 }} min per cell <span class="text-gray-500 dark:text-gray-400">(← → to step)</span></span>
+      <span>Session timeline, {{ CELL_S / 60 }} min per cell <span class="text-gray-500 dark:text-gray-400">(← → to step)</span>
+        · <NuxtLink :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`" class="text-primary-500 hover:underline">All bands, dedispersed</NuxtLink></span>
       <span class="flex flex-wrap items-center gap-3 text-gray-500 dark:text-gray-400">
         <span class="flex items-center gap-1">
           <svg class="w-3 h-3 rounded-sm bg-amber-300 dark:bg-amber-500/70" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
