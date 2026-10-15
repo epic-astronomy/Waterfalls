@@ -283,7 +283,8 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
         which also removes broadband signals that are not dispersed. Each channel is then expressed in S/N using the
         samples outside the search window. The search window, marked by the
         dashed lines and the shading, spans half the smearing within a channel, three times the arrival uncertainty
-        from the DM error, and a further 2 s. Channels dominated by RFI are blanked.
+        from the DM error, and a further 2 s. Channels dominated by RFI are blanked. The imager averages its 128
+        channels per band in pairs before storing the pixels, so each band is analysed as 64 channels of 47.85 kHz.
       </p>
       <UTable :rows="summary" :columns="summaryColumns" class="mt-3" :ui="{ td: { base: 'whitespace-normal' } }" />
       <UAlert v-if="!product.computed" class="mt-3" color="amber" variant="soft" icon="i-heroicons-clock"
