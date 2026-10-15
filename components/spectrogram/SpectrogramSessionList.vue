@@ -21,28 +21,36 @@ const props = defineProps({
 
 const columns = [{
   key: 'start_time',
-  label: 'Begin Time'
+  label: 'Begin Time',
+  sortable: true
 }, {
   key: 'end_time',
-  label: 'End Time'
+  label: 'End Time',
+  sortable: true
 }, {
   key: 'chan0',
-  label: 'Freq. (MHz)'
+  label: 'Freq. (MHz)',
+  sortable: true
 }, {
   key: 'chan_bw_hz',
-  label: 'Bandwidth (MHz)'
+  label: 'Bandwidth (MHz)',
+  sortable: true
 }, {
   key: 'int_time',
-  label: 'Time Resolution (ms)'
+  label: 'Time Resolution (ms)',
+  sortable: true
 },{
   key:'session_duration',
-  label:'Session duration'
+  label:'Session duration',
+  sortable: true
 }, {
   key: 'n_pol',
-  label: '# Polarizations'
+  label: '# Polarizations',
+  sortable: true
 },{
   key:'session_id',
-  label: 'Session ID'
+  label: 'Session ID',
+  sortable: true
 }]
 
 const selectedColumns = ref(columns.slice(0, 6))
@@ -65,6 +73,9 @@ const pageTotal = computed(() => imgSession.value.count)
 const pageFrom = computed(() => Math.min((page.value - 1) * rowsPerPage.value + 1, pageTotal.value))
 const pageTo = computed(() => Math.min(page.value * rowsPerPage.value, pageTotal.value))
 
+// sort by a column; without one the newest sessions come first
+const sort = ref<{ column: string, direction: 'asc' | 'desc' }>({ column: '', direction: 'asc' })
+
 const { pending, data: imgSession, error: error } = await useLazyAsyncData<ImgSessions>(
   'sessionlist',
   () => $fetch(rtConfig.public.fastapiBase + '/imaging/sessions/',
@@ -74,15 +85,17 @@ const { pending, data: imgSession, error: error } = await useLazyAsyncData<ImgSe
         nrows: rowsPerPage.value,
         start_time: props.sessionQuery?.tStart,
         end_time: props.sessionQuery?.tEnd,
-        source_name: props.sessionQuery?.sourceName
+        source_name: props.sessionQuery?.sourceName,
+        sort: sort.value.column || undefined,
+        order: sort.value.direction
       }
     }), {
-  watch: [() => page.value,()=>props.sessionQuery],
+  watch: [() => page.value, () => props.sessionQuery, rowsPerPage, sort],
   default: () => defaultImsSession
 })
 
-watch(()=>props.sessionQuery,(newQuery, oldQuery)=>{
-  page.value=1
+watch([() => props.sessionQuery, rowsPerPage, sort], () => {
+  page.value = 1
 })
 
 watch(()=>error, (newError,_) => {
@@ -109,6 +122,8 @@ const tableData = computed(() => {
       <div class="flex items-center gap-1.5">
         <span class="text-sm leading-5"> Rows per page:</span>
         <USelect v-model="rowsPerPage" :options="availrowsPerPage"></USelect>
+        <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
+          label="Default order" @click="sort = { column: '', direction: 'asc' }" />
       </div>
 
       <USelectMenu v-model="selectedColumns" :options="columns" multiple>
@@ -120,7 +135,7 @@ const tableData = computed(() => {
     <UTable :rows="tableData" :loading="pending"
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
-      v-model="selectedRow" :ui="{ checkbox: { padding: 'hidden' } }"
+      v-model="selectedRow" v-model:sort="sort" sort-mode="manual" :ui="{ checkbox: { padding: 'hidden' } }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
 
       <template #start_time-data="{row}">

@@ -10,31 +10,47 @@ const watchSource = defineModel({
 
 const columns = [{
   key: 'source',
-  label: 'Source Name'
+  label: 'Source Name',
+  sortable: true
+}, {
+  key: 'origin',
+  label: 'Origin',
+  sortable: true
+}, {
+  key: 'category',
+  label: 'Type',
+  sortable: true
 }, {
   key: 'watch_status',
-  label: 'Status'
+  label: 'Status',
+  sortable: true
 }, {
   key: 't_start',
-  label: 'Monitoring Start'
+  label: 'Monitoring Start',
+  sortable: true
 }, {
   key: 't_end',
-  label: 'Monitoring End'
+  label: 'Monitoring End',
+  sortable: true
 }, {
   key: 'reason',
-  label: 'Reason'
+  label: 'Reason',
+  sortable: true
 }, {
   key: 'author',
-  label: 'Author'
+  label: 'Author',
+  sortable: true
 }, {
   key: 'ra_deg',
-  label: 'RA'
+  label: 'RA',
+  sortable: true
 }, {
   key: 'dec_deg',
-  label: 'DEC'
+  label: 'DEC',
+  sortable: true
 }]
 
-const selectedColumns = ref(columns.slice(0, 4))
+const selectedColumns = ref(columns.slice(0, 6))
 const columnsTable = computed(() => columns.filter((column) => selectedColumns.value.includes(column)))
 const selectedRow: Ref<WatchListItem[] | undefined> = ref([])
 
@@ -57,12 +73,34 @@ const pageTotal = computed(() => watchlist.value.count)
 const pageFrom = computed(() => Math.min((page.value - 1) * rowsPerPage.value + 1, pageTotal.value))
 const pageTo = computed(() => Math.min(page.value * rowsPerPage.value, pageTotal.value))
 
+// Filter by kind of source, and sort by a column. Without a sort column the
+// server lists what is being watched first, then the most recently added.
+const categories = [
+  { value: 'all', label: 'All' },
+  { value: 'frb', label: 'FRBs' },
+  { value: 'pulsar', label: 'Pulsars' },
+  { value: 'solar_system', label: 'Solar system' }
+]
+const category = ref('all')
+const sort = ref<{ column: string, direction: 'asc' | 'desc' }>({ column: '', direction: 'asc' })
+const categoryLabels: Record<string, string> = { frb: 'FRB', pulsar: 'Pulsar', solar_system: 'Solar system', other: 'Other' }
+
 const { pending, data: watchlist, error: error } = await useLazyAsyncData<WatchList>(
   'watchlist',
-  () => $fetch(rtConfig.public.fastapiBase + '/watchlist/all/?page=' + page.value + '&nrows=' + rowsPerPage.value), {
-  watch: [() => page.value],
+  () => $fetch(rtConfig.public.fastapiBase + '/watchlist/all/', {
+    query: {
+      page: page.value,
+      nrows: rowsPerPage.value,
+      category: category.value,
+      sort: sort.value.column || undefined,
+      order: sort.value.direction
+    }
+  }), {
+  watch: [page, rowsPerPage, category, sort],
   default: () => defaultWatchList
 })
+
+watch([rowsPerPage, category, sort], () => { page.value = 1 })
 
 watch(error, (newError) => {
   if (newError) {
@@ -84,10 +122,20 @@ const tableData = computed(() => {
     body: { padding: '', base: 'divide-y divide-gray-200 dark:divide-gray-700' },
     footer: { padding: 'p-4' }
   }">
-    <div class="flex justify-between grid-cols-2 px-3 py-3.5 border-b border-gray-200 dark:border-gray-700">
+    <div class="flex flex-wrap justify-between items-center gap-3 px-3 py-3.5 border-b border-gray-200 dark:border-gray-700">
       <div class="flex items-center gap-1.5">
         <span class="text-sm leading-5"> Rows per page:</span>
         <USelect v-model="rowsPerPage" :options="availrowsPerPage"></USelect>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <UButtonGroup size="xs">
+          <UButton v-for="c in categories" :key="c.value" :label="c.label"
+            :color="category == c.value ? 'primary' : 'gray'" :variant="category == c.value ? 'solid' : 'ghost'"
+            @click="category = c.value" />
+        </UButtonGroup>
+        <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
+          label="Default order" @click="sort = { column: '', direction: 'asc' }" />
       </div>
 
       <USelectMenu v-model="selectedColumns" :options="columns" multiple :truncate="false">
@@ -99,7 +147,16 @@ const tableData = computed(() => {
     <UTable :rows="tableData" :loading="pending"
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
-      v-model="selectedRow" :ui="{ checkbox: { padding: 'hidden' } }">
+      v-model="selectedRow" v-model:sort="sort" sort-mode="manual" :ui="{ checkbox: { padding: 'hidden' } }">
+
+      <template #origin-data="{ row }">
+        <UBadge variant="soft" size="xs" :color="row.origin == 'chime' ? 'blue' : 'gray'"
+          :label="row.origin == 'chime' ? 'CHIME/FRB' : 'Manual'" />
+      </template>
+
+      <template #category-data="{ row }">
+        {{ categoryLabels[row.category] ?? row.category }}
+      </template>
 
       <template #watch_status-data="{ row }">
         <UBadge variant="soft" :label="row.watch_status == 'watching' ? 'Watching' : 'Completed'"

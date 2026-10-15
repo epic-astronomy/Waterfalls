@@ -1,4 +1,8 @@
 from fastapi import APIRouter, HTTPException, Request
+from typing import Literal
+
+from pydantic import BaseModel
+from sqlalchemy import and_, case, or_, true
 from sqlmodel import select, func, Session, insert, update
 
 from app.api.deps import UserDep, WatchListPagiDep
@@ -51,21 +55,83 @@ async def get_watched_list(
     sources = await get_watch_list(session, pagination, "watched")
     return sources
 
-@router.get('/all/', response_model=epic_watchdog_public)
-async def get_all_sources(session: SessionDep, current_user: UserDep, pagination: WatchListPagiDep
+# Category and origin of a watch-list entry, as SQL so that filtering and
+# sorting happen before pagination
+SOLAR_SYSTEM = ("sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune")
+CATEGORY = case(
+    (or_(epic_watchdog.event_type == "FRB detection", epic_watchdog.source.op("~*")(r"^(chime-)?frb")), "frb"),
+    (or_(epic_watchdog.source.op("~*")(r"^(psr|[bj][0-9]{4}[+-])"), func.lower(epic_watchdog.source) == "crab"), "pulsar"),
+    (func.lower(epic_watchdog.source).in_(SOLAR_SYSTEM), "solar_system"),
+    else_="other",
+)
+ORIGIN = case((epic_watchdog.author == "Waterfalls-CHIME", "chime"), else_="manual")
+WATCHING = epic_watchdog.watch_status == "watching"
+SORTABLE = {
+    "source": epic_watchdog.source, "watch_status": epic_watchdog.watch_status, "t_start": epic_watchdog.t_start,
+    "t_end": epic_watchdog.t_end, "reason": epic_watchdog.reason, "author": epic_watchdog.author,
+    "ra_deg": epic_watchdog.ra_deg, "dec_deg": epic_watchdog.dec_deg, "origin": ORIGIN, "category": CATEGORY,
+}
+
+
+class WatchListRow(BaseModel):
+    id: int
+    source: str
+    event_time: datetime | None = None
+    ra_deg: float | None = None
+    dec_deg: float | None = None
+    event_type: str | None = None
+    t_start: datetime | None = None
+    t_end: datetime | None = None
+    watch_mode: str | None = None
+    patch_type: int | None = None
+    reason: str | None = None
+    author: str | None = None
+    watch_status: str | None = None
+    voevent: str | None = None
+    category: str
+    origin: str
+
+
+class WatchListPage(BaseModel):
+    data: list[WatchListRow]
+    count: int
+
+
+@router.get("/all/", response_model=WatchListPage)
+async def get_all_sources(
+    session: SessionDep,
+    current_user: UserDep,
+    pagination: WatchListPagiDep,
+    category: Literal["all", "frb", "pulsar", "solar_system", "other"] = "all",
+    sort: str | None = None,
+    order: Literal["asc", "desc"] = "asc",
 ):
-    count_stmnt = (
-        select(func.count())
-        .select_from(epic_watchdog)
-    )
-    count = session.exec(count_stmnt).one()
-    fetch_stmnt = (
-        select(epic_watchdog)
+    """The watch list, by default with what is being watched first (manual
+    entries such as the Sun, then triggered ones), then the most recently
+    added. A column name in `sort` orders by that column instead."""
+    cond = true() if category == "all" else (CATEGORY == category)
+    count = session.exec(select(func.count()).select_from(epic_watchdog).where(cond)).one()
+
+    if sort in SORTABLE:
+        column = SORTABLE[sort]
+        ordering = [column.asc().nulls_last() if order == "asc" else column.desc().nulls_last()]
+    else:
+        ordering = [
+            WATCHING.desc(),
+            # among the entries being watched, manual ones (the Sun) first
+            case((and_(WATCHING, ORIGIN == "manual"), 0), else_=1),
+        ]
+    stmnt = (
+        select(epic_watchdog, CATEGORY.label("category"), ORIGIN.label("origin"))
+        .where(cond)
+        .order_by(*ordering, epic_watchdog.id.desc())  # then the most recently added
         .offset(pagination.skip)
         .limit(pagination.limit)
     )
-    sources = session.exec(fetch_stmnt).all()
-    return epic_watchdog_public(data=sources, count=count)
+    rows = session.exec(stmnt).all()
+    data = [WatchListRow(**w.model_dump(), category=c, origin=o) for w, c, o in rows]
+    return WatchListPage(data=data, count=count)
+
 
 def chime_notify_slack(frb_event:chime_frb_trigger, slack_msg):
     client = WebClient(token=settings.SLACK_CHIME_NOTIFIER_TOKEN)

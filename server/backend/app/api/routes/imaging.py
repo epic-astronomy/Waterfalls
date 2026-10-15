@@ -1,3 +1,4 @@
+from typing import Literal
 from fastapi import APIRouter, HTTPException
 from sqlmodel import select, func, text
 
@@ -42,8 +43,26 @@ async def get_imaging_sessions(
     current_user: UserDep,
     pagination: ObsSessionsPagiDep,
     obs_period: ObsPeriodDep,
+    sort: str | None = None,
+    order: Literal["asc", "desc"] = "asc",
 ):
-    print(obs_period)
+    sortable = {
+        "start_time": epic_img_metadata.session_start,
+        "end_time": epic_img_metadata.session_end,
+        "chan0": epic_img_metadata.chan0,
+        "chan_bw_hz": epic_img_metadata.chan_bw_hz * epic_img_metadata.n_chan,
+        "int_time": epic_img_metadata.int_time,
+        "session_duration": epic_img_metadata.session_end - epic_img_metadata.session_start,
+        "n_pol": epic_img_metadata.n_pol,
+        "session_id": epic_img_metadata.session_id,
+    }
+    if sort in sortable:
+        column = sortable[sort]
+        ordering = [column.asc() if order == "asc" else column.desc()]
+    else:
+        ordering = []
+    # newest first, then by band, after any requested column
+    ordering += [epic_img_metadata.session_start.desc(), epic_img_metadata.chan0.asc()]
     group_rows = [
         epic_img_metadata.session_id,
         epic_img_metadata.chan0,
@@ -88,12 +107,10 @@ async def get_imaging_sessions(
         )
         .where(epic_img_metadata.source_name == obs_period.source_name)
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
-        .order_by(epic_img_metadata.session_start.label("start_time").desc())
-        .order_by(epic_img_metadata.chan0.asc())
+        .order_by(*ordering)
         .offset(pagination.skip)
         .limit(pagination.limit)
     )
-    print(stmnt)
     obs_sessions = session.exec(stmnt).all()
     return epic_img_session_public(data=obs_sessions, count=count)
 

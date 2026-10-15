@@ -14,7 +14,9 @@ export interface WatchListItem{
   t_end: Date,
   voevent: String,
   watch_mode: WatchStatus,
-  watch_status: String
+  watch_status: String,
+  category?: 'frb' | 'pulsar' | 'solar_system' | 'other',
+  origin?: 'manual' | 'chime'
 }
 
 export interface WatchList{
