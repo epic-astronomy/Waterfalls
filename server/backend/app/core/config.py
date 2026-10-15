@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     FRB_DM_HALF_MAX: float = 25.0
     # combine the bands of an event this many hours after its watch ends, even if some are missing
     FRB_COMBINE_AFTER_H: float = 6.0
+    # the imager's geometry code and Python environment, for source positions
+    # on the image, and its image grid
+    FRB_GEOMETRY_PYTHON: str = "/home/epic/anaconda/envs/epic310/bin/python"
+    FRB_GEOMETRY_DIR: str = "/FileStore/epicT/epic/LWA_EPIC/src/python"
+    FRB_GRID_SIZE: int = 128
+    FRB_GRID_RES: float = 1.056
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)

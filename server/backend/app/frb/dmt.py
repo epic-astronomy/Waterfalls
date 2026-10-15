@@ -36,11 +36,12 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.frb import rfi
 from app.frb.fdmt import fdmt
+from app.frb.source_pixel import fetch_source_stokes_i
 from app.frb.products import FETCH_CHUNK_S, K_DM, N_POL, _robust, load_event
 
 log = logging.getLogger(__name__)
 
-VERSION = 3
+VERSION = 4
 DM_STEP = 0.05
 TAU_HALF = 60.0  # shortest span of arrival offsets searched and stored, s
 MAX_TAU_HALF = 900.0
@@ -187,7 +188,13 @@ def band_dmt(session: Session, event: dict, band: dict, dm_half: float) -> dict:
     pixels = {}
     # one pixel at a time: in the low bands a window spans about an hour
     for key in PIXELS:
-        times, stokes_i = _fetch_pixel(session, event["source"], band["chan0"], t_first, t_last, n_chan, key)
+        if key == (0, 0):
+            # the source itself, interpolated at its exact position; the other
+            # pixels stay as stored, for the comparison across the grid
+            times, stokes_i = fetch_source_stokes_i(session, event["source"], band["chan0"], t_first, t_last,
+                                                    n_chan, event["ra"], event["dec"])
+        else:
+            times, stokes_i = _fetch_pixel(session, event["source"], band["chan0"], t_first, t_last, n_chan, key)
         if not len(times):
             continue
         cleaned, mask = rfi.clean(stokes_i, dt, max(smear, 1.0))

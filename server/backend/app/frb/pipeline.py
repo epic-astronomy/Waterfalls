@@ -213,7 +213,9 @@ def _recent_events(session: Session) -> list[int]:
 def pending_bands(session: Session) -> list[tuple[int, int]]:
     """(event, band) pairs without a current result"""
     done = {(r[0], r[1]) for r in session.execute(
-        text(f"select event_id, chan0 from {SCHEMA}.epic_frb_band where products_version >= :pv and dmt_version >= :dv"),
+        # a failed band is tried again on the next run
+        text(f"select event_id, chan0 from {SCHEMA}.epic_frb_band where products_version >= :pv and dmt_version >= :dv "
+             "and status <> 'failed'"),
         dict(pv=products.VERSION, dv=dmt.VERSION))}
     out = []
     for event_id in _recent_events(session):

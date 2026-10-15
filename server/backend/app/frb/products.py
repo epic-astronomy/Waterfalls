@@ -25,10 +25,11 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.frb import rfi
+from app.frb.source_pixel import fetch_source_stokes_i
 
 log = logging.getLogger(__name__)
 
-VERSION = 4
+VERSION = 5
 K_DM = 4148.808  # dispersion delay constant, s MHz^2 cm^3 / pc
 N_POL = 4  # XX, YY, Re(XY), Im(XY) per channel in epic_pixels.pixel_values
 MIN_HALF_WINDOW_S = 60.0
@@ -49,30 +50,6 @@ def _robust(x: np.ndarray, axis=None):
     med = np.nanmedian(x, axis=axis, keepdims=True)
     mad = np.nanmedian(np.abs(x - med), axis=axis, keepdims=True)
     return med, MAD_TO_SIGMA * mad
-
-
-def _fetch_stokes_i(session: Session, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int):
-    """Stokes I (XX + YY) of the source pixel, as (times, [n_rows, n_chan])"""
-    times, rows = [], []
-    t = t0
-    while t < t1:
-        t_next = min(t1, t + timedelta(seconds=FETCH_CHUNK_S))
-        res = session.execute(
-            text(
-                f"select img_time, pixel_values from {settings.EPIC_DATA_SCHEMA}.epic_pixels "
-                "where img_time >= :t0 and img_time < :t1 and source_name = :src "
-                "and pix_offset::text = '(0,0)' and chan0 = :chan0"
-            ),
-            dict(t0=t, t1=t_next, src=source, chan0=chan0),
-        )
-        for img_time, values in res:
-            times.append(img_time)
-            rows.append(bytes(values))
-        t = t_next
-    if not rows:
-        return np.empty(0), np.empty((0, n_chan), np.float32)
-    data = np.frombuffer(b"".join(rows), dtype="<f4").reshape(len(rows), n_chan, N_POL)
-    return np.array(times, dtype="datetime64[us]"), data[:, :, 0] + data[:, :, 1]
 
 
 def _boxcar_peak(ts: np.ndarray, on: np.ndarray, off: np.ndarray, max_width: int):
@@ -131,7 +108,9 @@ def band_product(session: Session, event: dict, band: dict) -> dict:
         when = "before this band's session started" if t_last <= band["start"] else "after this band's session ended"
         return out | dict(status="no_data", note=f"The burst reached this band {when}.")
 
-    times, stokes_i = _fetch_stokes_i(session, event["source"], band["chan0"], t_first, t_last, n_chan)
+    # the source's value interpolated at its exact position, not the nearest pixel
+    times, stokes_i = fetch_source_stokes_i(session, event["source"], band["chan0"], t_first, t_last, n_chan,
+                                            event["ra"], event["dec"])
     if not len(times):
         return out | dict(status="no_data", note="No images of the source were stored for this window.")
 
@@ -203,7 +182,8 @@ def band_product(session: Session, event: dict, band: dict) -> dict:
 
 def load_event(session: Session, event_id: int) -> dict | None:
     row = session.execute(
-        text("select id, source, event_time, t_start, t_end, voevent::text from public.epic_watchdog where id = :id"),
+        text("select id, source, event_time, t_start, t_end, voevent::text, ra_deg, dec_deg from public.epic_watchdog "
+             "where id = :id"),
         dict(id=event_id),
     ).first()
     if row is None:
@@ -216,6 +196,7 @@ def load_event(session: Session, event_id: int) -> dict | None:
     return dict(
         id=row[0], source=row[1], t_inf=t_inf, t_start=row[3], t_end=row[4],
         dm=float(dm), dm_err=float(voevent_param(row[5], "dm_error") or 0.0),
+        ra=float(row[6]), dec=float(row[7]),
     )
 
 
