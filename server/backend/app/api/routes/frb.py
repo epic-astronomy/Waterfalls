@@ -57,3 +57,39 @@ async def get_frb_event(event_id: int, session: SessionDep, current_user: UserDe
             band[k] = base64.b64encode(bytes(band[k])).decode() if band[k] is not None else None
         bands.append(band)
     return dict(event | dict(computed=bool(bands)), bands=bands)
+
+
+@router.get("/events/{event_id}/dmt")
+async def get_frb_dmt(event_id: int, session: SessionDep, current_user: UserDep, px: int = 0, py: int = 0):
+    """DM transform of an event: the summary, the combined S/N of every pixel,
+    and the combined and per-band transforms of one pixel"""
+    schema = settings.EPIC_DATA_SCHEMA
+    analysis = session.execute(
+        text(f"select summary, created_at, notified_at from {schema}.epic_frb_analysis where event_id = :id"),
+        dict(id=event_id),
+    ).first()
+    if analysis is None:
+        return dict(computed=False)
+    grid = session.execute(
+        text(f"select px, py, peak_snr, peak_dm, peak_tau from {schema}.epic_frb_dmt "
+             "where event_id = :id and chan0 = 0 order by py, px"),
+        dict(id=event_id),
+    ).all()
+    cols = ["chan0", "dm_lo", "dm_step", "n_dm", "snr_dm", "map_dm_step", "map_n_dm", "map_tau0", "map_dtau",
+            "map_n_tau", "map", "peak_snr", "peak_dm", "peak_tau", "peak_width_s", "extra"]
+    rows = session.execute(
+        text(f"select {', '.join(cols)} from {schema}.epic_frb_dmt where event_id = :id and px = :px and py = :py "
+             "order by chan0 desc"),
+        dict(id=event_id, px=px, py=py),
+    ).all()
+    transforms = []
+    for r in rows:
+        t = dict(zip(cols, r))
+        for k in ("snr_dm", "map"):
+            t[k] = base64.b64encode(bytes(t[k])).decode() if t[k] is not None else None
+        transforms.append(t)
+    return dict(
+        computed=True, summary=analysis[0], computed_at=analysis[1], notified_at=analysis[2],
+        grid=[dict(px=g[0], py=g[1], snr=g[2], dm=g[3], tau=g[4]) for g in grid],
+        pixel=dict(px=px, py=py), transforms=transforms,
+    )

@@ -1,7 +1,10 @@
 import type { DailyDigestData, DailyDigestResp, DailyDigestTraceData } from '~/types';
 import { CHAN_BW_HZ, DIGEST_CHAN_OFFSET } from '~/lib/ndp';
 
-export function split_data_freq(resp: DailyDigestResp, gamma: number=0.5) {
+// sign(x)|x|^gamma: a plain power of a negative value is NaN for non-integer gamma
+const signedPow = (x: number, gamma: number) => Math.sign(x) * Math.pow(Math.abs(x), gamma)
+
+export function split_data_freq(resp: DailyDigestResp, gamma: number=1) {
   var out: { [cfreq: number]: DailyDigestTraceData } = {}
   if (!resp?.stats) return {}
 
@@ -11,8 +14,9 @@ export function split_data_freq(resp: DailyDigestResp, gamma: number=0.5) {
   let nChans = data[0].stokes_i.length
   let counter = 0
 
-  if(gamma<0 || gamma==undefined){
-    gamma=0.5
+  // fractional powers of negative values are NaN and leave holes in the image
+  if (gamma == undefined || !(Number(gamma) >= 1)) {
+    gamma = 1
   }
 
   for (let ifreq = 0; ifreq < nCFreqs; ifreq++) {
@@ -41,8 +45,8 @@ export function split_data_freq(resp: DailyDigestResp, gamma: number=0.5) {
     for (let i = counter; i < counter+nEpochs; i++) {
       img_time.push(data[i].img_time)
       for (let j = 0; j < nChans; j++) {
-        stokes_I[j][i-counter] = Math.pow(data[i].stokes_i[j]/1e19,gamma)
-        stokes_V[j][i-counter] = Math.pow(data[i].stokes_v[j]/1e19,gamma)
+        stokes_I[j][i-counter] = signedPow(data[i].stokes_i[j]/1e19,gamma)
+        stokes_V[j][i-counter] = signedPow(data[i].stokes_v[j]/1e19,gamma)
       }
     }
     //console.log(img_time.length)

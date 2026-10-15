@@ -8,12 +8,11 @@ channel is detrended and normalised to S/N units using the samples away from
 zero, channels dominated by RFI are flagged, and the unflagged channels are
 averaged into a band time series whose peak is searched with boxcar filters.
 
-Before dedispersion each channel is standardised and the median across
-channels is subtracted from every sample (zero-DM filtering, Eatough et
-al. 2009). This removes undispersed broadband RFI and gain or sky variations,
-which dedispersion would otherwise turn into slanted stripes, while a burst at
-a DM of hundreds sweeps through the band and loses only ~1/n_chan of its
-signal.
+Before dedispersion the dynamic spectrum is masked and detrended with the
+CHIME/FRB L1 RFI chain (rfi.py). Its fit along frequency removes undispersed
+broadband RFI and gain or sky variations, which dedispersion would otherwise
+turn into slanted stripes, while a burst at a DM of hundreds sweeps through
+the band and is barely affected.
 """
 
 import logging
@@ -25,14 +24,18 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.core.config import settings
+from app.frb import rfi
 
 log = logging.getLogger(__name__)
 
-VERSION = 2
+VERSION = 4
 K_DM = 4148.808  # dispersion delay constant, s MHz^2 cm^3 / pc
 N_POL = 4  # XX, YY, Re(XY), Im(XY) per channel in epic_pixels.pixel_values
 MIN_HALF_WINDOW_S = 60.0
-MAX_HALF_WINDOW_S = 600.0
+MAX_HALF_WINDOW_S = 900.0
+# the window outside the search region holds at least this many of the widest
+# boxcar, so its noise level is measured from enough independent samples
+OFF_WIDTHS = 10
 FETCH_CHUNK_S = 600.0
 MAD_TO_SIGMA = 1.4826
 
@@ -109,7 +112,8 @@ def band_product(session: Session, event: dict, band: dict) -> dict:
     sigma_t = K_DM * dm_err / f_c**2
     smear = 2 * K_DM * dm * (chan_bw / 1e6) / f_mid**3
     on_half = smear / 2 + 3 * K_DM * dm_err / f_mid**2 + 2.0
-    half = float(np.clip(2 * on_half, MIN_HALF_WINDOW_S, MAX_HALF_WINDOW_S))
+    max_width_s = max(smear, 1.0)  # widest boxcar: the smearing within a channel
+    half = float(np.clip(on_half + OFF_WIDTHS * max_width_s, MIN_HALF_WINDOW_S, MAX_HALF_WINDOW_S))
     n_half = int(np.ceil(half / dt))
     n_time = 2 * n_half + 1
     rel = (np.arange(n_time) - n_half) * dt
@@ -133,13 +137,8 @@ def band_product(session: Session, event: dict, band: dict) -> dict:
 
     t_rel = (times - np.datetime64(t_inf, "us")) / np.timedelta64(1, "s")
 
-    # zero-DM filter on standardised channels. With auto-correlations removed
-    # the source pixel has no positive baseline, so channels are scaled by
-    # their spread rather than divided by their level.
-    c_med, c_sig = _robust(stokes_i, axis=0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        stokes_i = np.where(c_sig > 0, (stokes_i - c_med) / c_sig, np.nan)
-    stokes_i = stokes_i - np.nanmedian(stokes_i, axis=1, keepdims=True)
+    # mask RFI and detrend before dedispersion; masked samples become NaN
+    stokes_i, _ = rfi.clean(stokes_i, dt, max(smear, 1.0))
     image = np.full((n_chan, n_time), np.nan)
     for c in range(n_chan):
         k = np.rint((t_rel - delay[c]) / dt).astype(int) + n_half
@@ -185,7 +184,7 @@ def band_product(session: Session, event: dict, band: dict) -> dict:
         m, s = _robust(ts[band_off])
         if np.isfinite(s).all() and s.item() > 0:
             ts = (ts - m.item()) / s.item()
-        max_width = max(1, int(min(2 * smear + 10, half) / dt))
+        max_width = max(1, int(min(max_width_s, (half - on_half) / OFF_WIDTHS) / dt))
         peak = _boxcar_peak(ts, np.abs(rel) <= on_half, band_off, max_width)
 
     snr, width, i = peak

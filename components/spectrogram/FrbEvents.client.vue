@@ -279,14 +279,15 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
       </div>
       <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
         Every channel is shifted by its dispersion delay at the CHIME DM, so a burst at that DM lines up at 0 s in all
-        channels and bands. Undispersed broadband signals are removed first (zero-DM filter). Each channel is then
-        detrended and expressed in S/N using the samples outside the search window. The search window, marked by the
+        channels and bands. RFI is masked and the data detrended first with the CHIME/FRB clipping and detrending chain,
+        which also removes broadband signals that are not dispersed. Each channel is then expressed in S/N using the
+        samples outside the search window. The search window, marked by the
         dashed lines and the shading, spans half the smearing within a channel, three times the arrival uncertainty
         from the DM error, and a further 2 s. Channels dominated by RFI are blanked.
       </p>
       <UTable :rows="summary" :columns="summaryColumns" class="mt-3" :ui="{ td: { base: 'whitespace-normal' } }" />
       <UAlert v-if="!product.computed" class="mt-3" color="amber" variant="soft" icon="i-heroicons-clock"
-        title="The products of this event have not been computed yet. They are made within 10 minutes of the watch ending." />
+        title="The products of this event have not been computed yet. They are made on the imaging nodes after the watch ends." />
     </UCard>
 
     <template v-if="bands.length">
@@ -307,5 +308,6 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
       </UCard>
     </template>
     <UCard v-else-if="product?.computed && !noDataBands.length" class="mt-2">No band has data for this event.</UCard>
+    <SpectrogramFrbDmt v-if="product && selectedId" :event-id="selectedId" />
   </UDashboardPanelContent>
 </template>

@@ -144,7 +144,9 @@ const { pending: pending2, data: digestData, error: dataError } = await useLazyA
 var plotTraces = ref<{ [cfreq: number]: DailyDigestTraceData }>({})
 var plotDataRaw: DailyDigestResp
 const plotlyDivId = `plotly-${uuidv4()}`
-const gammaCorr = ref<number>(0.5)
+// at least 1: with auto-correlations removed Stokes can be negative, and a
+// fractional power of a negative value leaves holes in the image
+const gammaCorr = ref<number>(1)
 
 const plotlyAxes = reactive({
   xLabels: Array<string>(),
@@ -343,7 +345,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="flex flex-wrap justify-center items-center gap-2 xs">
           <span class="text-md"> Scale exponent: </span>
-          <UInput v-model="gammaCorr" type="number" step="0.1" min="0" max="20" />
+          <UInput v-model="gammaCorr" type="number" step="0.1" min="1" max="20" />
         </div>
         <UButton :ui="{ rounded: 'rounded-md' }" variant="outline" label="Display" @click="displayData"
           :disabled="fetchDataDisabled">

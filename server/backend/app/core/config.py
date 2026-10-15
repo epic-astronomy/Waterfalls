@@ -77,7 +77,17 @@ class Settings(BaseSettings):
     # dedispersed FRB products: rescan interval and how far back to look
     FRB_PRODUCTS_SCAN_S: int = 600
     FRB_PRODUCTS_MAX_AGE_DAYS: int = 30
-    FRB_PRODUCTS_ENABLED: bool = True
+    # the analysis runs as the frb-analysis Nomad job; True runs it in the API process instead
+    FRB_PRODUCTS_ENABLED: bool = False
+    # post each finished FRB analysis to the CHIME Slack channel, linking here
+    FRB_SLACK_NOTIFY: bool = False
+    WATERFALLS_PUBLIC_URL: str = "https://epic-astronomy.org"
+    # trial DMs span the CHIME DM +- FACTOR x its quoted error, within [MIN, MAX]
+    FRB_DM_HALF_FACTOR: float = 10.0
+    FRB_DM_HALF_MIN: float = 3.0
+    FRB_DM_HALF_MAX: float = 25.0
+    # combine the bands of an event this many hours after its watch ends, even if some are missing
+    FRB_COMBINE_AFTER_H: float = 6.0
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)
