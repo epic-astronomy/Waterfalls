@@ -109,8 +109,10 @@ async def update_watchlist(
         return slack_msg
     
 
-    # set the duration to twice the arrival time at 28.1 MHz from inf MHz
-    dur = 4.15 * (1 / 28.1**2 - 1 / 400**2) * frb_event.dm * 1e3 * 2  # seconds
+    # watch until the burst has crossed the lowest imaged frequency, plus a
+    # margin, counting from its arrival time at infinite frequency
+    delay = 4148.808 * frb_event.dm / settings.LOWEST_FREQ_MHZ**2  # seconds
+    dur = delay * settings.CHIME_WATCH_MARGIN
     t_end = frb_event.timestamp_utc_inf_freq + timedelta(seconds=dur)
 
     # check if there is an item for the same event

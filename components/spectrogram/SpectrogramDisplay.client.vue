@@ -3,6 +3,7 @@ import type { PropType } from 'vue';
 import type { SpecgmData, SpecgmQuery } from '~/types'
 import * as specUtils from '~/lib/spectrogram'
 import { CHAN_BW_HZ } from '~/lib/ndp'
+import { freqAtMs, utcMs, type FrbParams } from '~/lib/frb'
 import Plotly from 'plotly.js-dist-min'
 import { v4 as uuidv4 } from "uuid"
 
@@ -12,8 +13,10 @@ const colorMode = useColorMode()
 
 const rtConfig = useRuntimeConfig()
 const props = defineProps<{
-  specgmQuery: SpecgmQuery
+  specgmQuery: SpecgmQuery,
+  frb?: FrbParams | null
 }>()
+const showDispersion = ref(true)
 
 // const startFreq = inject('startFreq')
 // const nChans = inject('nChans')
@@ -72,6 +75,7 @@ const plotlyAxes = reactive({
 const xLabels = ref(Array<string>())
 const yLabels = ref(Array<number>())
 const plotlyDivId = `plotly-${uuidv4()}`
+const plotlyDiv = ref<HTMLElement>()
 var plotlyHTMLElement
 var plotlyLayout = computed(() => {
   if (!props.specgmQuery) return {}
@@ -97,9 +101,14 @@ var plotlyLayout = computed(() => {
         color: colorMode.value == 'dark' ? 'white' : 'black',
         family: 'Courier New, monospace'
       },
-      tickcolor: colorMode.value == 'dark' ? 'white' : 'black'
+      tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
+      // keep the axes on the heatmap when the dispersion curve is drawn
+      range: plotlyAxes.xLabels.length ? [plotlyAxes.xLabels[0], plotlyAxes.xLabels[plotlyAxes.xLabels.length - 1]] : undefined
     },
     yaxis: {
+      range: plotlyAxes.yLabels.length
+        ? [plotlyAxes.yLabels[0] - chanBwHz.value / 2e6, plotlyAxes.yLabels[plotlyAxes.yLabels.length - 1] + chanBwHz.value / 2e6]
+        : undefined,
       title: {
         text: 'Frequency (MHz)',
         font: {
@@ -113,7 +122,35 @@ var plotlyLayout = computed(() => {
       },
       tickcolor: colorMode.value == 'dark' ? 'white' : 'black'
     },
-    paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)'
+    paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)',
+    hovermode: false,
+    showlegend: false
+  }
+})
+
+// Expected frequency of the burst over the displayed window, sampled in time
+// since it can drift by less than a channel in a window. Channels are drawn at
+// their lower edge, so the curve is offset by half a channel to match.
+const dispersionTrace = computed(() => {
+  const p = props.frb
+  const x = plotlyAxes.xLabels
+  const y = plotlyAxes.yLabels
+  if (!p || !showDispersion.value || x.length < 2 || !y.length) return null
+  const t0 = utcMs(x[0])
+  const t1 = utcMs(x[x.length - 1])
+  const half = chanBwHz.value / 2e6
+  const pts = []
+  for (let i = 0; i <= 300; i++) {
+    const t = t0 + (t1 - t0) * i / 300
+    const f = freqAtMs(p, t) - half
+    if (f >= y[0] - half && f <= y[y.length - 1] + half) pts.push({ t, f })
+  }
+  if (!pts.length) return null
+  return {
+    x: pts.map(d => new Date(d.t).toISOString().slice(0, 23)),
+    y: pts.map(d => d.f),
+    type: 'scatter', mode: 'lines',
+    line: { dash: 'dash', width: 1.5, color: colorMode.value == 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)' }
   }
 })
 
@@ -140,7 +177,7 @@ var plotlyTraces = computed(() => {
         family: 'Courier New, monospace'
       }
     }, colorscale: 'Viridis', zsmooth: 'fast'
-  }]
+  }, ...(dispersionTrace.value ? [dispersionTrace.value] : [])]
 })
 
 
@@ -215,6 +252,9 @@ function updatePlotData() {
 
 function updatePlot() {
   if (plotDataRaw.length < 1) return
+  // In a hidden tab the plot has no width and Plotly falls back to 700 px,
+  // so wait until the tab is shown; the resize observer draws it then
+  if (!plotlyDiv.value || plotlyDiv.value.clientWidth == 0) return
   plotData.value = new Array()
   //copy the data intp plotData
   for (const arr of plotDataRaw) {
@@ -263,6 +303,7 @@ watch(() => colorMode.value, (n, o) => {
   updatePlot()
 })
 watch(() => flagChans.value, (n, o) => updatePlot())
+watch(() => showDispersion.value, () => updatePlot())
 watch(()=>props.specgmQuery.session_id,(n,o)=>{
   if(n!=o){
     console.log('change in session id')
@@ -338,24 +379,26 @@ const resizeConfig = {
 }
 
 const setResizeObserver = () => {
-  resizeConfig.resizeObserver = new ResizeObserver(() => {
+  resizeConfig.resizeObserver = new ResizeObserver((entries) => {
+    if (entries.every(e => e.contentRect.width == 0)) return
     // debounce the reset
     clearTimeout(resizeConfig.timeOutFunctionId);
     resizeConfig.timeOutFunctionId = setTimeout(() => {
       updatePlot();
     }, 100);
   });
-  const plotlyElm = document.getElementById(plotlyDivId);
-  if (plotlyElm) {
-    resizeConfig.resizeObserver.observe(plotlyElm);
-  }
 }
-onMounted(() => {
-  setResizeObserver()
-})
+// Observe the plot whenever its element appears; in this client-only async
+// component it can be created after onMounted
+watch(plotlyDiv, (el, old) => {
+  if (old) resizeConfig.resizeObserver?.unobserve?.(old)
+  if (!el) return
+  if (!resizeConfig.resizeObserver?.observe) setResizeObserver()
+  resizeConfig.resizeObserver.observe(el)
+}, { immediate: true })
 
 onBeforeUnmount(() => {
-  resizeConfig.resizeObserver.disconnect();
+  resizeConfig.resizeObserver.disconnect?.();
 });
 
 </script>
@@ -370,6 +413,7 @@ onBeforeUnmount(() => {
           <div>Mode: </div>
           <URadio v-for="mode of displayModes" :key="mode.value" v-model="selectedMode" v-bind="mode" legend="Show" />
         </div>
+        <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
         <div class="flex justify-center space-x-4 items-center">
           <div> Flag: </div>
           <USelectMenu v-model="flagChans" :options="flagChansOptions" multiple>
@@ -389,7 +433,7 @@ onBeforeUnmount(() => {
 
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
       <UProgress v-if="pending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
-      <div :id="plotlyDivId"></div>
+      <div :id="plotlyDivId" ref="plotlyDiv"></div>
     
     </UCard>
 

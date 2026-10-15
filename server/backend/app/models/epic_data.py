@@ -177,6 +177,11 @@ class epic_daily_digest_base(SQLModel):
     stokes_v: List[float]  = Field(sa_column=Column(ARRAY(FLOAT)),default_factory=list)
     cfreq: float
 
+class epic_digest_point(SQLModel):
+    img_time: datetime
+    stokes_i: List[float]
+
+
 class epic_daily_digest_stats(SQLModel):
     cfreq: float
     count: int

@@ -46,6 +46,11 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[misc]
     @property
+    def LOWEST_FREQ_MHZ(self) -> float:
+        return min(self.OBS_CHANS) * self.CHAN_BW_HZ / 1e6
+
+    @computed_field  # type: ignore[misc]
+    @property
     def server_host(self) -> str:
         # Use HTTPS for anything other than local development
         if self.ENVIRONMENT == "local":
@@ -64,7 +69,11 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field('', validate_default=False)
     POSTGRES_DB: str = Field('',validate_default=False)
     EPIC_DATA_SCHEMA: str = Field('epic',validate_default=False)
-    MAX_SPECTROGRAM_PERIOD_S: int = 120
+    # matches the cadence of the long integrations behind the daily digest
+    MAX_SPECTROGRAM_PERIOD_S: int = 180
+    # CHIME/FRB watches last until the burst has crossed the lowest imaged
+    # frequency, times this margin
+    CHIME_WATCH_MARGIN: float = 1.2
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)

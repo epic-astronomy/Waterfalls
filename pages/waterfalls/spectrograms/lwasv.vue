@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import type {  ImgSessionItem,  WatchListItem,  SessionQuery,  SpecgmQuery } from '~/types'
 import { format } from 'date-fns';
+import { frbParams, isFrbSource } from '~/lib/frb'
 const watchSource = ref<WatchListItem>()
 const imgSession = ref<ImgSessionItem>()
 const specgmQuery = ref<SpecgmQuery>()
 const tabIndex = ref(0)
+// FRB sessions pick their windows on the timeline instead of the time inputs
+const isFrb = computed(() => isFrbSource(watchSource.value))
+const frb = computed(() => frbParams(watchSource.value))
 
 const tabItems = reactive([{
   label: 'Source',
@@ -105,8 +109,9 @@ const specgmValidMsg = ref('')
 function sessionToVis() {
   tabItems[2].disabled = false
   tabIndex.value = 2
+  if (isFrb.value) return
   specgmStart.value = selectedSessionStart.value
-  specgmEnd.value = new Date(new Date(selectedSessionStart.value+'Z').getTime() + 120 * 1000).toISOString().slice(0, -1)
+  specgmEnd.value = new Date(new Date(selectedSessionStart.value+'Z').getTime() + 180 * 1000).toISOString().slice(0, -1)
 }
 
 const fetchSpecgmDisabled = computed(() => {
@@ -117,13 +122,19 @@ const fetchSpecgmDisabled = computed(() => {
     specgmValidMsg.value = 'Start date cannot be greater than the end date.'
     return true
   }
-  if ((end.getTime() - start.getTime()) / 1000 > 120) {
-    specgmValidMsg.value = 'Spectrogram duration cannot exceed 2 minutes.'
+  if ((end.getTime() - start.getTime()) / 1000 > 180) {
+    specgmValidMsg.value = 'Spectrogram duration cannot exceed 3 minutes.'
     return true
   }
   specgmValidMsg.value = ''
   return false
 })
+
+function selectSpecgmWindow(start: string, end: string) {
+  specgmStart.value = start
+  specgmEnd.value = end
+  fetchSpecgm()
+}
 
 function fetchSpecgm(){
   if(!imgSession.value || !watchSource.value) return
@@ -240,7 +251,7 @@ useSeoMeta({
             <div class="text-2xl">{{ item.description }}</div>
             <UButton label="Back" @click="tabIndex--" :ui="{ rounded: 'rounded-md' }" icon="i-heroicons-chevron-left" leading></UButton>
           </div>
-          <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
+          <UCard v-if="!isFrb" :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
             <div class="flex flex-wrap justify-evenly items-center">
 
               <div class="flex flex-wrap justify-center items-center gap-2  sm:flex-rows-3">
@@ -263,7 +274,10 @@ useSeoMeta({
               </UAlert>
             </div>
           </UCard>
-          <SpectrogramDisplay v-if="specgmQuery" :specgm-query="specgmQuery"></SpectrogramDisplay>
+          <SpectrogramFrbTimeline v-if="isFrb" class="m-2"
+            :watch-source="watchSource" :img-session="imgSession" :window-start="specgmStart" :window-end="specgmEnd"
+            @select="selectSpecgmWindow" />
+          <SpectrogramDisplay v-if="specgmQuery" :specgm-query="specgmQuery" :frb="frb"></SpectrogramDisplay>
         </div>
         <div v-else="imgSession">
 

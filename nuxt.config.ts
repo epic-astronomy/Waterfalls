@@ -31,7 +31,7 @@ export default defineNuxtConfig({
     // Revalidate the docs search index on every use so a rebuild is picked up immediately
     '/api/search.json': { prerender: true, headers: { 'cache-control': 'no-cache' } },
     '/docs': { redirect: '/docs/introduction', prerender: false },
-    '/api/v1/**': { proxy: { to: 'http://127.0.0.1:8000/api/v1/**' } }
+    '/api/v1/**': { proxy: { to: `${process.env.WATERFALLS_API_ORIGIN || 'http://127.0.0.1:8000'}/api/v1/**` } }
   },
   runtimeConfig: {
     // Public keys that are exposed to the client

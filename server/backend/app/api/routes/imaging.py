@@ -23,6 +23,7 @@ from app.models.epic_data import (
     epic_daily_digest_table,
     epic_daily_digest_public,
     daily_obs,
+    epic_digest_point,
 )
 
 router = APIRouter()
@@ -200,3 +201,22 @@ async def get_daily_digest(
     )
     data = session.exec(stmnt).all()
     return epic_daily_digest_public(stats=stats, data=data)
+
+
+@router.get("/lightcurve/", response_model=list[epic_digest_point])
+async def get_light_curve(
+    session: SessionDep, current_user: UserDep, obs_period: ObsPeriodDep, chan0: int
+):
+    """Daily digest spectra of one source in one band over a time range"""
+    stmnt = (
+        select(epic_daily_digest_table.img_time, epic_daily_digest_table.stokes_i)
+        .where(epic_daily_digest_table.source_name == obs_period.source_name)
+        .where(
+            epic_daily_digest_table.img_time.between(
+                obs_period.start_time, obs_period.end_time
+            )
+        )
+        .where(digest_chan0 == chan0)
+        .order_by(epic_daily_digest_table.img_time.asc())
+    )
+    return session.exec(stmnt).all()
