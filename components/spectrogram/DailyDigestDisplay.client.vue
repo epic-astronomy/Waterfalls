@@ -13,7 +13,13 @@ const colorMode = useColorMode()
 
 const rtConfig = useRuntimeConfig()
 
-const digestDay = ref()
+const digestDay = ref<string | null>(null)
+// days with a digest, for the dots on the calendar, fetched for the days in view
+const digestRange = ref<[string, string] | null>(null)
+const { data: digestDays } = await useLazyAsyncData<string[]>('digest-days', () => digestRange.value
+  ? $fetch(rtConfig.public.fastapiBase + '/imaging/dailyobs/days/', { query: { start: digestRange.value[0], end: digestRange.value[1] } })
+  : Promise.resolve([]), { watch: [digestRange], default: () => [], server: false })
+const digestMarks = computed(() => Object.fromEntries((digestDays.value ?? []).map(d => [d, 1])))
 const selectedSrc = ref('')
 const chan_bw_hz = ref(2 * CHAN_BW_HZ)
 const obsEnd = format((new Date().toISOString().slice(0, -1)), 'yyyy-MM-dd') // would be the current day in UTC
@@ -329,22 +335,27 @@ onBeforeUnmount(() => {
 
 
         <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md">Day (UTC): </span>
-          <UInput type="date" v-model="digestDay" step=1 min="2024-10-16" :max="obsEnd"></UInput>
+          <span class="text-md">Day (UTC)</span>
+          <SpectrogramDayPicker v-model="digestDay" :marks="digestMarks" min="2024-10-16" :max="obsEnd" utc placeholder="Select a day"
+            :clearable="false" @range="(a, b) => digestRange = [a < '2024-10-16' ? '2024-10-16' : a, b > obsEnd ? obsEnd : b]">
+            <template #legend>
+              <span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />Digest available</span>
+            </template>
+          </SpectrogramDayPicker>
         </div>
         <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md"> Source: </span>
+          <span class="text-md">Source</span>
           <USelect v-model="selectedSrc" :options="sourceNames" placeholder="Select a source">
           </USelect>
         </div>
         <div class="flex justify-center space-x-4 items-center">
-          <div>Stokes: </div>
+          <div>Stokes</div>
           <div style="font-family: monospace;" class="flex justify-center space-x-4 items-center">
             <URadio v-for="mode of displayModes" :key="mode.value" v-model="selectedMode" v-bind="mode" legend="Show" />
           </div>
         </div>
         <div class="flex flex-wrap justify-center items-center gap-2 xs">
-          <span class="text-md"> Scale exponent: </span>
+          <span class="text-md">Scale exponent</span>
           <UInput v-model="gammaCorr" type="number" step="0.1" min="1" max="20" />
         </div>
         <UButton :ui="{ rounded: 'rounded-md' }" variant="outline" label="Display" @click="displayData"

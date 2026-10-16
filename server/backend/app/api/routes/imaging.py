@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import select, func, text
 
 from sqlalchemy.dialects.postgresql import TEXT
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 
 
 from app.api.deps import UserDep, WatchListPagiDep
@@ -152,6 +152,31 @@ async def get_imaging_sessions(
     )
     print(stmnt)
     return session.exec(stmnt).all()
+
+
+@router.get("/dailyobs/days/", response_model=list[date])
+async def get_daily_obs_days(session: SessionDep, current_user: UserDep, start: date, end: date):
+    """The UTC days from `start` to `end` with a daily digest: those with at
+    least 30 minutes of an imaging session, as /dailyobs/ requires"""
+    if (end - start).days > 4000:
+        raise HTTPException(status_code=400, detail="At most 4000 days at a time")
+    lo, hi = datetime.combine(start, time()), datetime.combine(end + timedelta(days=1), time())
+    sessions = session.exec(
+        select(epic_img_metadata.session_start, epic_img_metadata.session_end)
+        .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
+        .where(epic_img_metadata.session_start < hi)
+        .where(epic_img_metadata.session_end > lo)
+        .distinct()
+    ).all()
+    days = set()
+    for s0, s1 in sessions:
+        d = max(s0, lo).date()
+        while datetime.combine(d, time()) < min(s1, hi):
+            d0 = datetime.combine(d, time())
+            if min(s1, d0 + timedelta(days=1)) - max(s0, d0) >= timedelta(minutes=30):
+                days.add(d)
+            d += timedelta(days=1)
+    return sorted(days)
 
 
 @router.get("/spectrogram/", response_model=list[test_epic_pixels])
