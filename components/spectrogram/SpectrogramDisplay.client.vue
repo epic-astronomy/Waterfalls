@@ -35,6 +35,42 @@ interface flagChanOptType {
   label: string
 }
 const flagChans = ref<flagChanOptType[]>([])
+
+// Automatic RFI flagging with the analysis flagger (lib/rfi.ts, the CHIME/FRB
+// L1 chain), run in a worker once per window and mode and cached, so turning
+// it on and off, or returning to a mode, costs nothing
+const IMAGE_DT_S = 0.0836
+const rfiOn = ref(false)
+const rfiMasks = ref<Record<string, Uint8Array[]>>({})
+const rfiPending = ref(false)
+let rfiWorker: Worker | null = null
+let rfiRequest = 0
+let rfiRequestMode = ''
+const rfiFlagged = computed(() => {
+  const m = rfiMasks.value[selectedMode.value]
+  if (!m) return null
+  let bad = 0, n = 0
+  for (const row of m) { n += row.length; for (let t = 0; t < row.length; t++) bad += 1 - row[t] }
+  return n ? 100 * bad / n : 0
+})
+function requestRfiMask() {
+  if (!rfiOn.value || !plotDataRaw.length || rfiMasks.value[selectedMode.value]) return
+  if (!rfiWorker) {
+    rfiWorker = new Worker(new URL('../../lib/rfi.worker.ts', import.meta.url), { type: 'module' })
+    rfiWorker.onmessage = (e: MessageEvent<{ id: number, mask: Uint8Array[] }>) => {
+      // a newer window or mode supersedes this one
+      if (e.data.id != rfiRequest) return
+      rfiMasks.value = { ...rfiMasks.value, [rfiRequestMode]: e.data.mask }
+      rfiPending.value = false
+      updatePlot()
+    }
+  }
+  rfiRequest++
+  rfiRequestMode = selectedMode.value
+  rfiPending.value = true
+  rfiWorker.postMessage({ id: rfiRequest, channels: plotDataRaw.map(r => r.slice()), dt: IMAGE_DT_S })
+}
+onBeforeUnmount(() => rfiWorker?.terminate())
 var flagChansOptions = ref<flagChanOptType[]>([])
 watch(()=>props.specgmQuery.start_chan,(n,o)=>{
   console.log('changed in startchan, nchans')
@@ -125,6 +161,8 @@ var plotlyLayout = computed(() => {
       tickcolor: colorMode.value == 'dark' ? 'white' : 'black'
     },
     paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)',
+    // flagged samples are gaps in the heatmap; show them as neutral grey
+    plot_bgcolor: colorMode.value == 'dark' ? '#374151' : '#d1d5db',
     hovermode: false,
     showlegend: false
   }
@@ -262,6 +300,8 @@ function updatePlot() {
   for (const arr of plotDataRaw) {
     plotData.value.push(arr.slice())
   }
+  const rfi = rfiOn.value ? rfiMasks.value[selectedMode.value] : undefined
+  if (rfi) plotData.value.forEach((row, c) => { const m = rfi[c]; if (m) for (let t = 0; t < row.length; t++) if (!m[t]) row[t] = NaN })
   for (const flag of flagChans.value) {
     console.log('flagging', flag.id, flagChans)
     if (flag.id >= 0) plotData.value[flag.id] = plotData.value[flag.id].fill(NaN)
@@ -306,6 +346,7 @@ watch(() => colorMode.value, (n, o) => {
 })
 watch(() => flagChans.value, (n, o) => updatePlot())
 watch(() => showDispersion.value, () => updatePlot())
+watch(rfiOn, on => { if (on && !rfiMasks.value[selectedMode.value]) requestRfiMask(); else updatePlot() })
 watch(tz.mode, () => updatePlot())
 watch(()=>props.specgmQuery.session_id,(n,o)=>{
   if(n!=o){
@@ -349,8 +390,12 @@ watch(() => specgmDataBytes.value, (newData, _) => {
 
   // console.log(raw_data.value)
   //heatmap.value.data[0].z = xx_data.value
+  rfiMasks.value = {}
+  rfiPending.value = false
+  rfiRequest++
   updatePlotData()
   updatePlot()
+  requestRfiMask()
 
 })
 
@@ -360,6 +405,7 @@ watch(() => selectedMode.value, (newMode, _) => {
   console.log('changing plotdata')
   updatePlotData()
   updatePlot()
+  requestRfiMask()
 
 })
 
@@ -423,7 +469,14 @@ onBeforeUnmount(() => {
           <span class="text-sm">Mode</span>
           <USelect v-model="selectedMode" :options="displayModes" option-attribute="label" value-attribute="value" />
         </div>
-        <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
+        <div class="flex items-center gap-x-6">
+          <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
+          <div class="flex items-center gap-2">
+            <UCheckbox v-model="rfiOn" label="Flag RFI" />
+            <UIcon v-if="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
+            <span v-else-if="rfiOn && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged.toFixed(1) }}% flagged</span>
+          </div>
+        </div>
         <div class="flex justify-center space-x-4 items-center">
           <span class="text-sm">Flag</span>
           <USelectMenu v-model="flagChans" :options="flagChansOptions" multiple>
