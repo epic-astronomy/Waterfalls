@@ -243,8 +243,50 @@ function restandardise(x: Float64Array, mask: Mask, nt: number, nf: number) {
   return out
 }
 
-// Mask of good samples (1) for channels[f][t], as channel-major rows
-export function rfiMask(channels: ArrayLike<number>[], dtS: number, maxWidthS = 1.0): Uint8Array[] {
+// Whole channels that stand out from their neighbours in frequency, judged on
+// the raw values: a typical level (median over time) or a spread over time
+// (MAD) more than CHANNEL_SIGMA robust standard deviations above a running
+// median across CHANNEL_WINDOW channels. The CHIME chain standardises each
+// channel first, so a steady carrier or a line that switches on and off
+// looks ordinary to it; in a picture they are the most visible RFI. Not part
+// of the FRB analysis, where a steady offset is removed anyway.
+const CHANNEL_SIGMA = 5
+const CHANNEL_WINDOW = 7
+function channelClip(x: Float64Array, mask: Mask, nt: number, nf: number) {
+  const level = new Float64Array(nf).fill(NaN), spread = new Float64Array(nf).fill(NaN)
+  const v = new Float64Array(nt)
+  for (let f = 0; f < nf; f++) {
+    let n = 0
+    for (let t = 0; t < nt; t++) if (mask[t * nf + f]) v[n++] = x[t * nf + f]
+    if (n < 8) continue
+    const med = median(v, n)
+    for (let j = 0; j < n; j++) v[j] = Math.abs(v[j] - med)
+    level[f] = med
+    spread[f] = 1.4826 * median(v, n)
+  }
+  const bad = new Uint8Array(nf)
+  const scratch = new Float64Array(nf)
+  for (const [a, twoSided] of [[level, true], [spread, false]] as const) {
+    const r = new Float64Array(nf).fill(NaN)
+    const h = CHANNEL_WINDOW >> 1
+    for (let f = 0; f < nf; f++) {
+      if (!isFinite(a[f])) continue
+      let n = 0
+      for (let g = Math.max(0, f - h); g <= Math.min(nf - 1, f + h); g++) if (isFinite(a[g])) scratch[n++] = a[g]
+      r[f] = a[f] - median(scratch, n)
+    }
+    let n = 0
+    for (let f = 0; f < nf; f++) if (isFinite(r[f])) scratch[n++] = Math.abs(r[f])
+    const sig = 1.4826 * median(scratch, n)
+    if (!(sig > 0)) continue
+    for (let f = 0; f < nf; f++) if (isFinite(r[f]) && (twoSided ? Math.abs(r[f]) : r[f]) > CHANNEL_SIGMA * sig) bad[f] = 1
+  }
+  for (let f = 0; f < nf; f++) if (bad[f]) for (let t = 0; t < nt; t++) mask[t * nf + f] = 0
+}
+
+// Mask of good samples (1) for channels[f][t], as channel-major rows. With
+// channelClip, whole outlying channels are masked first (see channelClip).
+export function rfiMask(channels: ArrayLike<number>[], dtS: number, maxWidthS = 1.0, opts: { channelClip?: boolean } = {}): Uint8Array[] {
   const nf = channels.length, nt = channels[0]?.length ?? 0
   let x = new Float64Array(nt * nf)
   let mask: Mask = new Uint8Array(nt * nf)
@@ -252,6 +294,7 @@ export function rfiMask(channels: ArrayLike<number>[], dtS: number, maxWidthS = 
     const v = channels[f][t]
     if (isFinite(v)) { x[t * nf + f] = v; mask[t * nf + f] = 1 }
   }
+  if (opts.channelClip) channelClip(x, mask, nt, nf)
   // static mask of dead channels, then standardise each channel
   const v = new Float64Array(nt)
   for (let f = 0; f < nf; f++) {
