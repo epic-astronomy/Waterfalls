@@ -24,8 +24,10 @@ const props = defineProps({
 })
 
 // For an FRB the exact times matter less than whether a session catches the
-// burst, so the time columns give way to a strip spanning the whole watch,
-// with the session and the burst's crossing of its band marked on it
+// burst, so the time columns give way to a strip spanning the whole watch:
+// time across and the session's band down, top edge at the top. The session
+// is shaded and the burst drawn as its dispersion curve through the band,
+// bright where the session records it
 const burstOnly = ref(false)
 const coverageColumn = { key: 'coverage', label: 'Session and burst in the watch' }
 function coverage(row: ImgSessionItem) {
@@ -38,9 +40,16 @@ function coverage(row: ImgSessionItem) {
   const s0 = utcMs(String(row.start_time)), s1 = utcMs(String(row.end_time))
   const b0 = arrivalMs(p, fHi, Math.max(0, p.dm - p.dmErr)), b1 = arrivalMs(p, fLo, p.dm + p.dmErr)
   const hit = s0 < b1 && s1 > b0
+  // the curve at the CHIME DM, in a 100 x 10 box
+  const n = 24
+  const curve = Array.from({ length: n + 1 }, (_, k) => {
+    const f = fHi - (fHi - fLo) * k / n
+    return `${k ? 'L' : 'M'}${pos(arrivalMs(p, f)).toFixed(3)},${(10 * k / n).toFixed(3)}`
+  }).join('')
   return {
+    id: `cov-${row.session_id}-${row.chan0}`,
     session: { left: pos(s0), width: Math.max(0.5, pos(s1) - pos(s0)) },
-    burst: { left: pos(b0), width: Math.max(0.8, pos(b1) - pos(b0)) },
+    curve,
     hit,
     title: `Session ${tz.clock(s0)} to ${tz.clock(s1)}, burst crosses the band ${tz.clock(b0)} to ${tz.clock(b1)} ${tz.zoneName(b0)}`
       + (hit ? '' : '. The session misses the burst.')
@@ -171,18 +180,26 @@ const tableData = computed(() => {
     <UTable :rows="tableData" :loading="pending"
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
-      v-model="selectedRow" v-model:sort="sort" sort-mode="manual" :ui="{ checkbox: { padding: 'hidden' } }"
+      v-model="selectedRow" v-model:sort="sort" sort-mode="manual"
+      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center' }, td: { base: 'whitespace-nowrap text-center' } }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
 
       <template #coverage-data="{ row }">
-        <div v-if="coverage(row)" class="relative h-5 min-w-48 w-full rounded-sm bg-gray-100 dark:bg-gray-800 overflow-hidden"
-          :title="coverage(row)!.title" :aria-label="coverage(row)!.title" role="img">
-          <div class="absolute inset-y-0 bg-primary-500/35 dark:bg-primary-400/30"
-            :style="{ left: `${coverage(row)!.session.left}%`, width: `${coverage(row)!.session.width}%` }" />
-          <div class="absolute inset-y-1 rounded-sm"
-            :class="coverage(row)!.hit ? 'bg-amber-400 dark:bg-amber-400' : 'bg-amber-400/35 dark:bg-amber-400/30'"
-            :style="{ left: `${coverage(row)!.burst.left}%`, width: `${coverage(row)!.burst.width}%` }" />
-        </div>
+        <svg v-if="coverage(row)" class="block h-7 min-w-48 w-full rounded-sm bg-gray-100 dark:bg-gray-800" viewBox="0 0 100 10"
+          preserveAspectRatio="none" role="img" :aria-label="coverage(row)!.title">
+          <title>{{ coverage(row)!.title }}</title>
+          <defs>
+            <clipPath :id="coverage(row)!.id">
+              <rect :x="coverage(row)!.session.left" y="0" :width="coverage(row)!.session.width" height="10" />
+            </clipPath>
+          </defs>
+          <rect :x="coverage(row)!.session.left" y="0" :width="coverage(row)!.session.width" height="10"
+            class="fill-primary-500/30 dark:fill-primary-400/25" />
+          <path :d="coverage(row)!.curve" fill="none" vector-effect="non-scaling-stroke" stroke-width="1.5" stroke-linecap="round"
+            class="stroke-amber-500/40 dark:stroke-amber-300/40" />
+          <path :d="coverage(row)!.curve" fill="none" vector-effect="non-scaling-stroke" stroke-width="2.5" stroke-linecap="round"
+            :clip-path="`url(#${coverage(row)!.id})`" class="stroke-amber-500 dark:stroke-amber-300" />
+        </svg>
       </template>
 
       <template #start_time-data="{row}">
