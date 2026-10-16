@@ -213,7 +213,7 @@ const displayModes = [{
   label: 'Y∗Y',
   value: 'yy'
 }, {
-  label: 'Stokes I (X∗X + Y∗Y)',
+  label: 'Stokes I',
   value: 'xx_yy'
 }]
 
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
 
     <!-- {{ pending }} <span v-if="plotData"> {{ plotData.length }}</span> -->
     <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
-      <div class="flex justify-between">
+      <div class="flex flex-wrap justify-center items-center gap-x-10 gap-y-2">
         <div class="flex justify-center space-x-4 items-center">
           <span class="text-sm">Mode</span>
           <USelect v-model="selectedMode" :options="displayModes" option-attribute="label" value-attribute="value" />
@@ -441,8 +441,9 @@ onBeforeUnmount(() => {
           <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
           <div class="flex items-center gap-2">
             <UCheckbox v-model="rfiOn" label="Flag RFI" />
-            <UIcon v-if="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
-            <span v-else-if="rfiOn && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged.toFixed(1) }}% flagged</span>
+            <!-- always present and only shown or hidden: swapping them in and out with v-if broke Vue's patching here -->
+            <UIcon v-show="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
+            <span v-show="rfiOn && !rfiPending && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged?.toFixed(1) }}% flagged</span>
           </div>
         </div>
       </div>

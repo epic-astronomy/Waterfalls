@@ -6,7 +6,8 @@ import { CHAN_BW_HZ } from '~/lib/ndp'
 const watchSource = ref<WatchListItem>()
 const imgSession = ref<ImgSessionItem>()
 const specgmQuery = ref<SpecgmQuery>()
-const tabIndex = ref(0)
+// the tab from the address, so a reload opens it directly
+const tabIndex = ref(Math.max(0, Math.min(2, Number(useRoute().query.tab) || 0)))
 // FRB sessions pick their windows on the timeline instead of the time inputs
 const isFrb = computed(() => isFrbSource(watchSource.value))
 const frb = computed(() => frbParams(watchSource.value))
@@ -124,13 +125,13 @@ watch(watchSource, (src) => {
     ? listDay.value : null
   if (sessionDay.value != day) sessionDay.value = day // fetches through the watcher
   else fetchSession()
-  tabIndex.value = 1
+  if (!restoring) tabIndex.value = 1
 })
 
 // A new session: the first 3 minutes, unless the FRB timeline chooses the window
 watch(imgSession, (session) => {
   if (!session) return
-  tabIndex.value = 2
+  if (!restoring) tabIndex.value = 2
   if (isFrb.value) return
   specgmQuery.value = undefined
   specgmStart.value = selectedSessionStart.value
