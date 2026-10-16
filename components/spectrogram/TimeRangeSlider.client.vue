@@ -23,11 +23,17 @@ const lo = computed(() => frac(sel.value[0]))
 const hi = computed(() => frac(sel.value[1]))
 
 // the light curve as SVG paths in a 1000 x 100 box, a line and the area
-// under it, broken at gaps and scaled to its 1st to 99th percentiles
+// under it, broken at gaps and clipped as below
 const paths = computed(() => {
   const v = props.values.filter(isFinite).sort((a, b) => a - b)
   if (!v.length) return { line: '', area: '' }
-  const vmin = v[Math.floor(0.01 * (v.length - 1))], vmax = v[Math.ceil(0.99 * (v.length - 1))]
+  // the 2nd to 98th percentiles, and no more than 6 robust sigma from the
+  // median, so a few deep dips do not flatten the rest even in short curves
+  const med = v[Math.floor(v.length / 2)]
+  const dev = v.map(x => Math.abs(x - med)).sort((a, b) => a - b)
+  const sig = 1.4826 * dev[Math.floor(dev.length / 2)]
+  let vmin = v[Math.floor(0.02 * (v.length - 1))], vmax = v[Math.ceil(0.98 * (v.length - 1))]
+  if (sig > 0) { vmin = Math.max(vmin, med - 6 * sig); vmax = Math.min(vmax, med + 6 * sig) }
   const scale = vmax > vmin ? 80 / (vmax - vmin) : 0
   let line = '', area = '', run: string[] = []
   const close = () => {

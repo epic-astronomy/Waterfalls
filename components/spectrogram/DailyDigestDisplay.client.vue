@@ -146,7 +146,8 @@ var plotDataRaw: DailyDigestResp
 const plotlyDivId = `plotly-${uuidv4()}`
 // The exponent stretches the colour map, not the data: a value u in [0, 1]
 // of the colour range gets the colour Viridis(u^exponent), so negative values
-// need no special care. The slider is logarithmic, from 1/4 to 4.
+// need no special care. The slider is logarithmic, from 1/4 to 16, and
+// starts at 4.
 //
 // To keep the slider responsive, each band is drawn as an image rather than
 // a Plotly heatmap. When the data arrive, every pixel is reduced once to an
@@ -154,7 +155,8 @@ const plotlyDivId = `plotly-${uuidv4()}`
 // slider then only rebuilds a 256-colour palette, recolours these small
 // images and swaps them into the plot, which Plotly does without redrawing
 // the axes. Invisible heatmaps underneath keep the hover readout.
-const stretchPos = ref(0) // -100 to 100
+const STRETCH_DEFAULT = 100
+const stretchPos = ref(STRETCH_DEFAULT) // -100 to 200
 const exponent = computed(() => Math.pow(4, stretchPos.value / 100))
 const VIRIDIS = ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725']
   .map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)))
@@ -177,11 +179,36 @@ const plotlyAxes = reactive({
 // One panel per band, highest frequency at the top, stacked without gaps on
 // a shared time axis. Each band has its own colour scale, because the sky
 // brightness differs by an order of magnitude across the bands.
+// Panels are sized so the whole digest fits the window below the plot's top
+// edge, between 60 and 130 px per band; unchecking Fit to window gives every
+// band 130 px
 const PANEL_PX = 130
+const PANEL_MIN_PX = 60
+const PLOT_MARGIN_PX = 75 // the top and bottom margins of the plot
+const fitWindow = ref(true)
+const windowHeight = ref(import.meta.client ? window.innerHeight : 900)
+const plotTop = ref(300)
+const plotBox = ref<HTMLElement>()
+function measure() {
+  windowHeight.value = window.innerHeight
+  if (plotBox.value) plotTop.value = plotBox.value.getBoundingClientRect().top + (plotBox.value.closest('.overflow-y-auto')?.scrollTop ?? 0)
+}
+// the title and slider above the plot settle after the data arrive
+const headerBox = ref<HTMLElement>()
+const headerObserver = import.meta.client ? new ResizeObserver(() => measure()) : null
+watch(headerBox, (el, old) => { if (old) headerObserver?.unobserve(old); if (el) headerObserver?.observe(el) })
+onMounted(() => window.addEventListener('resize', measure))
+onBeforeUnmount(() => { window.removeEventListener('resize', measure); headerObserver?.disconnect() })
+const panelPx = computed(() => {
+  const n = bandKeys.value.length || 1
+  if (!fitWindow.value) return PANEL_PX
+  return Math.max(PANEL_MIN_PX, Math.min(PANEL_PX, Math.floor((windowHeight.value - plotTop.value - 16 - PLOT_MARGIN_PX) / n)))
+})
 const ink = computed(() => colorMode.value == 'dark' ? 'white' : 'black')
 const paper = computed(() => colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)')
 const bandKeys = computed(() => Object.keys(plotTraces.value).map(Number).sort((a, b) => b - a))
-const plotHeight = computed(() => bandKeys.value.length * PANEL_PX + 110)
+const plotHeight = computed(() => bandKeys.value.length * panelPx.value + PLOT_MARGIN_PX)
+watch(plotHeight, () => nextTick(updatePlot))
 const utcStr = (ms: number) => new Date(ms).toISOString().slice(0, 23).replace('T', ' ')
 
 // zoom window from the slider, in UTC ms; null for the whole day
@@ -191,8 +218,7 @@ const plotlyLayout = computed(() => {
   const n = bandKeys.value.length
   const font = { family: 'Courier New, monospace', color: ink.value }
   const layout: Record<string, any> = {
-    title: { text: selectedSrc.value + ' | LWA-Sevilleta', font: { ...font, size: 22 } },
-    height: plotHeight.value, margin: { l: 80, r: 110, t: 50, b: 55 },
+    height: plotHeight.value, margin: { l: 80, r: 110, t: 20, b: 55 },
     paper_bgcolor: paper.value, plot_bgcolor: 'rgba(0,0,0,0)', font, hovermode: 'closest', showlegend: false,
     images: bandImages(exponent.value),
     annotations: [{ text: 'Frequency (MHz)', textangle: -90, xref: 'paper', yref: 'paper', x: 0, xshift: -70, y: 0.5,
@@ -230,27 +256,52 @@ var plotlyConfig = computed(() => {
 // in units of its robust scatter (1.4826 times the median absolute
 // deviation). This removes the bandpass and the brightness differences
 // between bands, so all panels share one colour scale.
-function normalise(rows: Float32Array[]) {
+function normalise(rows: Float32Array[], blank: Uint8Array) {
   return rows.map(row => {
-    const v = Array.from(row).filter(isFinite).sort((a, b) => a - b)
+    const v = Array.from(row).filter((x, j) => isFinite(x) && !blank[j]).sort((a, b) => a - b)
     if (!v.length) return row.map(() => NaN)
     const med = v[Math.floor(v.length / 2)]
     const dev = v.map(x => Math.abs(x - med)).sort((a, b) => a - b)
     const sig = 1.4826 * dev[Math.floor(dev.length / 2)] || 1
-    return row.map(x => (x - med) / sig)
+    return row.map((x, j) => blank[j] ? NaN : (x - med) / sig)
   })
 }
+
+// Samples where a band's output went dead: the mean of |Stokes I| over the
+// channels falls below 1% of the band's typical (90th percentile) level.
+// With the auto-correlations removed the plain mean of a healthy low band
+// can sit near zero, so the magnitude is tested. From 13:14 to 14:15 UTC on
+// 2026-10-15 every band dropped by a factor of 100 to 10^8. Blank samples
+// are shown as gaps and left out of the statistics and the light curve.
+const meanI = (tr: DailyDigestTraceData, j: number) => {
+  let sum = 0, n = 0
+  for (const ch of tr.stokes_I) if (isFinite(ch[j])) { sum += ch[j]; n++ }
+  return n >= tr.stokes_I.length / 2 ? sum / n : NaN
+}
+const blanks = computed(() => Object.fromEntries(bandKeys.value.map(k => {
+  const tr = plotTraces.value[k]
+  const level = tr.img_time.map((_, j) => {
+    let sum = 0, n = 0
+    for (const ch of tr.stokes_I) if (isFinite(ch[j])) { sum += Math.abs(ch[j]); n++ }
+    return n >= tr.stokes_I.length / 2 ? sum / n : NaN
+  })
+  const ok = level.filter(isFinite).sort((a, b) => a - b)
+  const typical = ok[Math.floor(0.9 * (ok.length - 1))] ?? 0
+  return [k, Uint8Array.from(level, v => !isFinite(v) || v < 1e-2 * typical ? 1 : 0)]
+})))
 const normalised = computed(() => Object.fromEntries(bandKeys.value.map(k => [k, {
-  i: normalise(plotTraces.value[k].stokes_I), v: normalise(plotTraces.value[k].stokes_V)
+  i: normalise(plotTraces.value[k].stokes_I, blanks.value[k]), v: normalise(plotTraces.value[k].stokes_V, blanks.value[k])
 }])))
-// the shared colour range, from the 1st and 99th percentiles of all panels
+// the shared colour range, from the 1st and 99th percentiles of all panels,
 const colourRange = computed(() => {
   const v: number[] = []
   for (const k of bandKeys.value) for (const row of normalised.value[k][selectedMode.value as 'i' | 'v'])
     for (let j = 0; j < row.length; j += Math.max(1, Math.floor(row.length / 200))) if (isFinite(row[j])) v.push(row[j])
   if (!v.length) return [-3, 5]
   v.sort((a, b) => a - b)
-  return [v[Math.floor(0.01 * (v.length - 1))], v[Math.ceil(0.99 * (v.length - 1))]]
+  // at most 10 sigma either side, so a transient such as a band restarting
+  // does not compress the rest of the day into a few colours
+  return [Math.max(-10, v[Math.floor(0.01 * (v.length - 1))]), Math.min(10, v[Math.ceil(0.99 * (v.length - 1))])]
 })
 
 // Each band on a regular time grid at the digest cadence, as colour indices
@@ -326,39 +377,41 @@ var plotlyTraces = computed(() => {
   })
 })
 
-// Light curve behind the zoom slider: Stokes I summed over the channels of
-// each band, each band divided by its median so none dominates, averaged
-// across the bands in bins of the digest cadence
+// Activity curve behind the zoom slider: at each time, the root mean square
+// over every channel of every band of the normalised values the panels show
+// (Stokes I or V as selected), in bins of the digest cadence. It is low when
+// the spectrum is as usual and peaks at bursts, interference and other
+// changes, wherever in the band they occur. A median or mean over the bands
+// mostly followed slow drifts and hid events confined to a few channels.
 const lightCurve = computed(() => {
   const keys = bandKeys.value
   if (!keys.length) return { start: 0, end: 1, times: [] as number[], values: [] as number[] }
-  const ms = (t: string) => Date.parse(t.replace(' ', 'T').replace(/Z?$/, 'Z'))
   const all = keys.flatMap(k => plotTraces.value[k].img_time.map(ms))
   const lo = Math.min(...all), hi = Math.max(...all)
   const first = plotTraces.value[keys[0]].img_time.map(ms)
   const steps = first.slice(1).map((t, j) => t - first[j]).filter(d => d > 0).sort((a, b) => a - b)
   const w = Math.max(1, steps[Math.floor(steps.length / 2)] ?? (hi - lo) / 300)
   const nBins = Math.max(1, Math.min(2000, Math.ceil((hi - lo) / w)))
-  const sum = new Float64Array(nBins), cnt = new Float64Array(nBins)
+  const sumSq = new Float64Array(nBins), cnt = new Float64Array(nBins)
   for (const k of keys) {
-    const tr = plotTraces.value[k]
-    const tot = tr.img_time.map((_, j) => tr.stokes_I.reduce((a, ch) => a + (isFinite(ch[j]) ? ch[j] : 0), 0))
-    const sorted = [...tot].sort((a, b) => a - b)
-    const med = Math.abs(sorted[Math.floor(sorted.length / 2)]) || 1
-    tr.img_time.forEach((t, j) => {
+    const z = normalised.value[k][selectedMode.value as 'i' | 'v']
+    plotTraces.value[k].img_time.forEach((t, j) => {
       const b = Math.min(nBins - 1, Math.floor((ms(t) - lo) / w))
-      sum[b] += tot[j] / med; cnt[b]++
+      for (const row of z) if (isFinite(row[j])) { sumSq[b] += row[j] * row[j]; cnt[b]++ }
     })
   }
   return {
     start: lo, end: hi,
     times: Array.from({ length: nBins }, (_, b) => lo + (b + 0.5) * w),
-    values: Array.from(sum, (v, b) => cnt[b] ? v / cnt[b] : NaN)
+    // on a log scale, so the peaks keep their shape and the quiet baseline shows
+    values: Array.from(sumSq, (v, b) => cnt[b] && v > 0 ? 0.5 * Math.log10(v / cnt[b]) : NaN)
   }
 })
 
 function updatePlot() {
   if (fetchDataDisabled.value || !bandKeys.value.length) return
+  // the title and slider above may have just appeared; a new height redraws
+  measure()
   const el = document.getElementById(plotlyDivId)
   if (!el || !el.clientWidth) return
   Plotly.react(el, plotlyTraces.value, plotlyLayout.value, plotlyConfig.value).then(() => {
@@ -400,7 +453,7 @@ watch(() => digestData.value, (newData, _) => {
   plotDataRaw = newData
   plotTraces.value = digestUtils.split_data_freq(plotDataRaw)
   zoom.value = null
-  nextTick(updatePlot)
+  nextTick(() => { measure(); updatePlot() })
 })
 
 watch(() => dataError, (n, _) => {
@@ -450,16 +503,14 @@ onBeforeUnmount(() => {
 
 </script>
 <template>
-  <UDashboardNavbar title="Daily Digest - Long Wavelength Array, Sevilleta"></UDashboardNavbar>
-  <UDashboardPanelContent>
-    <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }" class="relative">
+  <!-- the page's controls sit in the header bar; the sidebar names the page -->
+  <UDashboardNavbar :ui="{ wrapper: 'h-auto min-h-[--header-height] py-2 relative', left: 'flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0' }">
+    <template #left>
       <UProgress v-if="pending || pending2" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
 
-      <div class="flex flex-wrap justify-evenly items-center">
 
-
-        <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md">Day (UTC)</span>
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-600 dark:text-gray-300">Day (UTC)</span>
           <SpectrogramDayPicker v-model="digestDay" :marks="digestMarks" min="2024-10-16" :max="obsEnd" utc placeholder="Select a day"
             :clearable="false" @range="(a, b) => digestRange = [a < '2024-10-16' ? '2024-10-16' : a, b > obsEnd ? obsEnd : b]">
             <template #legend>
@@ -467,30 +518,41 @@ onBeforeUnmount(() => {
             </template>
           </SpectrogramDayPicker>
         </div>
-        <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md">Source</span>
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-600 dark:text-gray-300">Source</span>
           <USelect v-model="selectedSrc" :options="sourceNames" placeholder="Select a source">
           </USelect>
         </div>
-        <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md">Stokes</span>
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-600 dark:text-gray-300">Stokes</span>
           <USelect v-model="selectedMode" :options="displayModes" option-attribute="label" value-attribute="value" />
         </div>
-        <div class="flex flex-wrap justify-center items-center gap-2">
-          <span class="text-md">Colour exponent</span>
-          <URange v-model="stretchPos" :min="-100" :max="100" :step="1" size="sm" class="w-40" aria-label="Colour exponent" />
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-600 dark:text-gray-300">Colour exponent</span>
+          <URange v-model="stretchPos" :min="-100" :max="200" :step="1" size="sm" class="w-40" aria-label="Colour exponent" />
           <span class="w-10 text-sm tabular-nums">{{ exponent.toFixed(2) }}</span>
-          <UButton v-if="stretchPos != 0" size="2xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
-            aria-label="Reset the colour exponent" @click="stretchPos = 0" />
+          <UButton v-if="stretchPos != STRETCH_DEFAULT" size="2xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
+            aria-label="Reset the colour exponent" @click="stretchPos = STRETCH_DEFAULT" />
         </div>
-      </div>
-    </UCard>
+    </template>
+  </UDashboardNavbar>
+  <UDashboardPanelContent>
     <!-- always in the page, so the resize observer can watch it -->
-    <UCard v-show="bandKeys.length" class="mt-2" :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
-      <div class="relative">
+    <UCard v-show="bandKeys.length" :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
+      <div ref="headerBox">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-2 sm:pl-[80px] sm:pr-[110px]">
+        <h2 class="font-mono text-lg">{{ selectedSrc }} | LWA-Sevilleta | {{ digestDay }}</h2>
+        <UCheckbox v-model="fitWindow" label="Fit to window" />
+      </div>
+      <div v-if="lightCurve.times.length" class="px-2 pt-1 sm:pl-[80px] sm:pr-[110px]">
+        <SpectrogramTimeRangeSlider v-model="zoom" :times="lightCurve.times" :values="lightCurve.values"
+          :start="lightCurve.start" :end="lightCurve.end" />
+      </div>
+      </div>
+      <div ref="plotBox" class="relative">
         <div :id="plotlyDivId" :style="{ height: `${plotHeight}px` }"></div>
         <!-- the colour bar, outside Plotly so the exponent slider does not redraw the plot -->
-        <div v-if="bandKeys.length" class="absolute right-0 flex pointer-events-none" :style="{ top: '50px', bottom: '55px', width: '104px' }">
+        <div v-if="bandKeys.length" class="absolute right-0 flex pointer-events-none" :style="{ top: '20px', bottom: '55px', width: '104px' }">
           <div class="relative ml-2 w-3.5 ring-1 ring-gray-900 dark:ring-white" :style="{ background: gradient }">
             <div v-for="t in colourTicks" :key="t.v" class="absolute left-full flex items-center -translate-y-1/2" :style="{ bottom: `calc(${t.pos}% - 0.5px)`, transform: 'translateY(50%)' }">
               <span class="w-1 h-px bg-gray-900 dark:bg-white" />
@@ -502,13 +564,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <div v-if="lightCurve.times.length" class="px-2 pb-1 sm:pl-[80px] sm:pr-[110px]">
-        <div class="mb-1 text-xs text-gray-500 dark:text-gray-400">Drag the handles or the window to zoom in time. The line is Stokes I summed over the channels and averaged over the bands.</div>
-        <SpectrogramTimeRangeSlider v-model="zoom" :times="lightCurve.times" :values="lightCurve.values"
-          :start="lightCurve.start" :end="lightCurve.end" />
-      </div>
     </UCard>
-    <UCard v-if="!bandKeys.length" class="mt-2">
+    <UCard v-if="!bandKeys.length">
       <UPageHero title="Select a day and a source to continue" align="center" />
     </UCard>
   </UDashboardPanelContent>
