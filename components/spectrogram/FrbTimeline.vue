@@ -119,6 +119,10 @@ const rows = computed(() => {
         t0: Math.max(c0, start),
         t1: Math.min(c1, end),
         inSession: overlaps(c0, c1, start, end),
+        // the cells where the session starts and ends, marked on their outer edge
+        isStart: start >= c0 && start < c1,
+        isEnd: end > c0 && end <= c1,
+        before: c1 <= start,
         inBurst,
         sub: inBurst ? subBand(c0, c1) : null,
         level: levelIn(c0, c1),
@@ -168,14 +172,17 @@ const burstNote = computed(() => {
 })
 
 function cellTitle(c: (typeof sessionCells.value)[number]) {
+  if (!c.inSession) return c.before ? 'Before the session started' : 'After the session ended'
   let t = `${hhmmss(c.t0)}–${hhmmss(c.t1)} ${tz.zoneName(c.t0)}`
   if (c.sub) t += ` · burst at ${c.sub.fTop.toFixed(2)}–${c.sub.fBot.toFixed(2)} MHz`
   else if (c.inBurst) t += ' · burst arrival (DM uncertainty)'
   return t
 }
 
+// Cells outside the session keep their place in the hour as dashed outlines,
+// so a session that starts late in an hour does not leave a puzzling gap
 function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }) {
-  if (!c.inSession) return 'invisible'
+  if (!c.inSession) return 'border border-dashed border-gray-300 dark:border-gray-700 cursor-default'
   return [
     c.inBurst
       ? 'bg-amber-300 hover:bg-amber-400 dark:bg-amber-500/70 dark:hover:bg-amber-500/90'
@@ -189,10 +196,19 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
   <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-sm">
       <span>Session timeline, {{ CELL_S / 60 }} min per cell <span class="text-gray-500 dark:text-gray-400">(← → to step)</span></span>
-      <UButton :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`" icon="i-heroicons-squares-2x2-20-solid"
+      <UButton :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`"
         trailing-icon="i-heroicons-arrow-right-20-solid" size="sm" color="primary" variant="solid" label="Show all bands, dedispersed" />
     </div>
     <div class="space-y-1.5">
+      <!-- minutes past the hour -->
+      <div class="flex items-end gap-2" aria-hidden="true">
+        <span class="w-11 shrink-0" />
+        <div class="grid flex-1 gap-0.5" :style="{ gridTemplateColumns: `repeat(${CELLS_PER_ROW}, minmax(0, 1fr))` }">
+          <span v-for="k in CELLS_PER_ROW" :key="k" class="text-[10px] font-mono text-gray-400 dark:text-gray-500 leading-none">
+            {{ (k - 1) % 5 == 0 ? `:${String((k - 1) * CELL_S / 60).padStart(2, '0')}` : '' }}
+          </span>
+        </div>
+      </div>
       <div v-for="row in rows" :key="row.id" class="flex items-start gap-2">
         <span class="w-11 shrink-0 pt-1 text-xs font-mono text-gray-500 dark:text-gray-400">{{ row.label }}</span>
         <div class="grid flex-1 gap-0.5" :style="{ gridTemplateColumns: `repeat(${CELLS_PER_ROW}, minmax(0, 1fr))` }">
@@ -204,6 +220,8 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
                 <line :x1="c.sub.x1" :y1="c.sub.y1" :x2="c.sub.x2" :y2="c.sub.y2" vector-effect="non-scaling-stroke"
                   stroke-width="2" stroke-linecap="round" class="stroke-amber-800 dark:stroke-amber-100" />
               </svg>
+              <span v-if="c.inSession && c.isStart" class="absolute inset-y-0 left-0 w-1 bg-primary-500 dark:bg-primary-400" />
+              <span v-if="c.inSession && c.isEnd" class="absolute inset-y-0 right-0 w-1 bg-primary-500 dark:bg-primary-400" />
             </button>
             <div class="h-3 flex items-end" :class="c.inSession ? '' : 'invisible'">
               <div v-if="c.level !== null" class="w-full rounded-sm bg-primary-500/70"
