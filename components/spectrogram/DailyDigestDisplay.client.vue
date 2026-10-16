@@ -168,8 +168,6 @@ function viridis(t: number) {
 }
 const palette = (g: number) => Array.from({ length: 256 }, (_, k) => viridis(Math.pow(k / 255, g))
   .slice(4, -1).split(',').map(Number))
-const gradient = computed(() => `linear-gradient(to top, ${Array.from({ length: 17 }, (_, k) =>
-  `${viridis(Math.pow(k / 16, exponent.value))} ${(100 * k / 16).toFixed(1)}%`).join(', ')})`)
 
 const plotlyAxes = reactive({
   xLabels: Array<string>(),
@@ -218,7 +216,7 @@ const plotlyLayout = computed(() => {
   const n = bandKeys.value.length
   const font = { family: 'Courier New, monospace', color: ink.value }
   const layout: Record<string, any> = {
-    height: plotHeight.value, margin: { l: 80, r: 110, t: 20, b: 55 },
+    height: plotHeight.value, margin: { l: 80, r: 20, t: 20, b: 55 },
     paper_bgcolor: paper.value, plot_bgcolor: 'rgba(0,0,0,0)', font, hovermode: 'closest', showlegend: false,
     images: bandImages(exponent.value),
     annotations: [{ text: 'Frequency (MHz)', textangle: -90, xref: 'paper', yref: 'paper', x: 0, xshift: -70, y: 0.5,
@@ -353,13 +351,6 @@ function bandImages(g: number) {
     }
   })
 }
-const colourTicks = computed(() => {
-  const [lo, hi] = colourRange.value
-  const step = [0.5, 1, 2, 5, 10, 20].find(st => (hi - lo) / st <= 6) ?? 50
-  const out = []
-  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push({ v, pos: 100 * (v - lo) / (hi - lo) })
-  return out
-})
 
 var plotlyTraces = computed(() => {
   const n = bandKeys.value.length
@@ -372,7 +363,7 @@ var plotlyTraces = computed(() => {
       z, type: 'heatmap',
       x: trace.img_time, y: trace.freqs, xaxis: `x${s}`, yaxis: `y${s}`,
       hoverongaps: false, opacity: 0, showscale: false, zsmooth: false,
-      hovertemplate: '%{x|%H:%M:%S} UTC<br>%{y:.2f} MHz<br>%{z:.1f} σ<extra></extra>'
+      hovertemplate: '%{x|%H:%M:%S} UTC<br>%{y:.2f} MHz<extra></extra>'
     }
   })
 })
@@ -538,29 +529,17 @@ onBeforeUnmount(() => {
     <!-- always in the page, so the resize observer can watch it -->
     <UCard v-show="bandKeys.length" :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
       <div ref="headerBox">
-      <div class="flex flex-wrap items-center justify-between gap-2 px-2 sm:pl-[80px] sm:pr-[110px]">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-2 sm:pl-[80px] sm:pr-[20px]">
         <h2 class="font-mono text-lg">{{ selectedSrc }} | LWA-Sevilleta | {{ digestDay }}</h2>
         <UCheckbox v-model="fitWindow" label="Fit to window" />
       </div>
-      <div v-if="lightCurve.times.length" class="px-2 pt-1 sm:pl-[80px] sm:pr-[110px]">
+      <div v-if="lightCurve.times.length" class="px-2 pt-1 sm:pl-[80px] sm:pr-[20px]">
         <SpectrogramTimeRangeSlider v-model="zoom" :times="lightCurve.times" :values="lightCurve.values"
           :start="lightCurve.start" :end="lightCurve.end" />
       </div>
       </div>
       <div ref="plotBox" class="relative">
         <div :id="plotlyDivId" :style="{ height: `${plotHeight}px` }"></div>
-        <!-- the colour bar, outside Plotly so the exponent slider does not redraw the plot -->
-        <div v-if="bandKeys.length" class="absolute right-0 flex pointer-events-none" :style="{ top: '20px', bottom: '55px', width: '104px' }">
-          <div class="relative ml-2 w-3.5 ring-1 ring-gray-900 dark:ring-white" :style="{ background: gradient }">
-            <div v-for="t in colourTicks" :key="t.v" class="absolute left-full flex items-center -translate-y-1/2" :style="{ bottom: `calc(${t.pos}% - 0.5px)`, transform: 'translateY(50%)' }">
-              <span class="w-1 h-px bg-gray-900 dark:bg-white" />
-              <span class="ml-1 text-[11px] font-mono text-gray-900 dark:text-white">{{ t.v }}</span>
-            </div>
-          </div>
-          <div class="ml-7 flex items-center">
-            <span class="whitespace-nowrap text-xs text-gray-900 dark:text-white [writing-mode:vertical-rl]">Stokes {{ selectedMode.toUpperCase() }}, σ from channel median</span>
-          </div>
-        </div>
       </div>
     </UCard>
     <UCard v-if="!bandKeys.length">

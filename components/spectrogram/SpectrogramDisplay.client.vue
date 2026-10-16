@@ -205,18 +205,24 @@ var plotlyConfig = computed(() => {
   }
 })
 
+// Colour range from the 1st to 99th percentiles of the samples shown (flagged
+// ones excluded), so a few bright samples of leftover RFI do not compress
+// the rest; no colour bar, since the images are not calibrated
+function robustRange(rows: Float32Array[]) {
+  const v: number[] = []
+  const n = rows.reduce((a, r) => a + r.length, 0)
+  const step = Math.max(1, Math.floor(n / 20000))
+  let k = 0
+  for (const r of rows) for (let t = 0; t < r.length; t++, k++) if (k % step == 0 && isFinite(r[t])) v.push(r[t])
+  if (v.length < 2) return {}
+  v.sort((a, b) => a - b)
+  return { zmin: v[Math.floor(0.01 * (v.length - 1))], zmax: v[Math.ceil(0.99 * (v.length - 1))] }
+}
+
 var plotlyTraces = computed(() => {
   return [{
     z: plotData.value, type: 'heatmap', x: plotlyAxes.xLabels.map(tz.plotTime), y: plotlyAxes.yLabels, hoverongaps: false,
-    colorbar: {
-      exponentformat: 'e',
-      bordercolor: colorMode.value == 'dark' ? 'white' : 'black',
-      tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
-      tickfont: {
-        color: colorMode.value == 'dark' ? 'white' : 'black',
-        family: 'Courier New, monospace'
-      }
-    }, colorscale: 'Viridis', zsmooth: 'fast'
+    ...robustRange(plotData.value), showscale: false, colorscale: 'Viridis', zsmooth: 'fast'
   }, ...(dispersionTrace.value ? [dispersionTrace.value] : [])]
 })
 
