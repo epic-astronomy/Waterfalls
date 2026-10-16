@@ -199,7 +199,7 @@ const displayModes = [{
   label: 'Y∗Y',
   value: 'yy'
 }, {
-  label: 'I = (X∗X + Y∗Y)',
+  label: 'Stokes I (X∗X + Y∗Y)',
   value: 'xx_yy'
 }]
 
@@ -420,12 +420,12 @@ onBeforeUnmount(() => {
     <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
       <div class="flex justify-between">
         <div class="flex justify-center space-x-4 items-center">
-          <div>Mode: </div>
-          <URadio v-for="mode of displayModes" :key="mode.value" v-model="selectedMode" v-bind="mode" legend="Show" />
+          <span class="text-sm">Mode</span>
+          <USelect v-model="selectedMode" :options="displayModes" option-attribute="label" value-attribute="value" />
         </div>
         <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
         <div class="flex justify-center space-x-4 items-center">
-          <div> Flag: </div>
+          <span class="text-sm">Flag</span>
           <USelectMenu v-model="flagChans" :options="flagChansOptions" multiple>
             <template #label>
               <template v-if="flagChans.length">

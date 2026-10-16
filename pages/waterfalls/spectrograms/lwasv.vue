@@ -74,6 +74,9 @@ const frbDays = computed(() => {
 // Session tab: every session of the watch, or those of one day
 const sessionQuery = ref<SessionQuery>()
 const sessionDay = ref<string | null>(null)
+// the whole watch, to the present while it continues
+const watchWindow = computed<[number, number] | null>(() => watchSource.value
+  ? [Date.parse(obsStart.value + 'Z'), Date.parse(obsEnd.value + 'Z')] : null)
 const watchFirstDay = computed(() => tz.dayKey(obsStart.value))
 const watchLastDay = computed(() => tz.dayKey(obsEnd.value))
 
@@ -237,7 +240,8 @@ useSeoMeta({
 
       <template #sessionSelection>
         <div v-if="watchSource" class="mt-2">
-          <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession">
+          <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession" :frb="isFrb ? frb : null"
+            :watch-window="isFrb ? watchWindow : null">
             <!-- FRB watches last hours, so their sessions are always listed in full -->
             <template v-if="!isFrb" #toolbar>
               <SpectrogramDayPicker v-model="sessionDay" :min="watchFirstDay" :max="watchLastDay" class="ml-2" />

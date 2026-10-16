@@ -4,6 +4,7 @@ import type { PropType } from 'vue';
 import type { ImgSessionItem, ImgSessions, SessionQuery } from '~/types'
 import humanizeDuration from 'humanize-duration'
 import { CHAN_BW_HZ } from '~/lib/ndp'
+import { arrivalMs, utcMs, type FrbParams } from '~/lib/frb'
 const toast = useToast()
 const tz = useTimeZone()
 const rtConfig = useRuntimeConfig()
@@ -16,8 +17,35 @@ const props = defineProps({
   sessionQuery: {
     type: Object as PropType<SessionQuery>,
     required: false
-  }
+  },
+  // for a CHIME/FRB source: its DM and arrival, and the span of its watch
+  frb: { type: Object as PropType<FrbParams | null>, default: null },
+  watchWindow: { type: Array as unknown as PropType<[number, number] | null>, default: null }
 })
+
+// For an FRB the exact times matter less than whether a session catches the
+// burst, so the time columns give way to a strip spanning the whole watch,
+// with the session and the burst's crossing of its band marked on it
+const burstOnly = ref(false)
+const coverageColumn = { key: 'coverage', label: 'Session and burst in the watch' }
+function coverage(row: ImgSessionItem) {
+  const p = props.frb, w = props.watchWindow
+  if (!p || !w) return null
+  const span = Math.max(1, w[1] - w[0])
+  const pos = (t: number) => Math.min(100, Math.max(0, 100 * (t - w[0]) / span))
+  const fLo = row.chan0 * CHAN_BW_HZ / 1e6
+  const fHi = fLo + row.n_chan * row.chan_bw_hz / 1e6
+  const s0 = utcMs(String(row.start_time)), s1 = utcMs(String(row.end_time))
+  const b0 = arrivalMs(p, fHi, Math.max(0, p.dm - p.dmErr)), b1 = arrivalMs(p, fLo, p.dm + p.dmErr)
+  const hit = s0 < b1 && s1 > b0
+  return {
+    session: { left: pos(s0), width: Math.max(0.5, pos(s1) - pos(s0)) },
+    burst: { left: pos(b0), width: Math.max(0.8, pos(b1) - pos(b0)) },
+    hit,
+    title: `Session ${tz.clock(s0)} to ${tz.clock(s1)}, burst crosses the band ${tz.clock(b0)} to ${tz.clock(b1)} ${tz.zoneName(b0)}`
+      + (hit ? '' : '. The session misses the burst.')
+  }
+}
 
 
 const columns = [{
@@ -55,7 +83,11 @@ const columns = [{
 }]
 
 const selectedColumns = ref(columns.slice(0, 6))
-const columnsTable = computed(() => columns.filter((column) => selectedColumns.value.includes(column)))
+const columnsTable = computed(() => {
+  const shown = columns.filter((column) => selectedColumns.value.includes(column))
+  if (!props.frb) return shown
+  return [coverageColumn, ...shown.filter(c => c.key != 'start_time' && c.key != 'end_time')]
+})
 const selectedRow: Ref<ImgSessionItem[] | undefined> = ref([])
 
 function rowSelect(row: ImgSessionItem) {
@@ -88,14 +120,15 @@ const { pending, data: imgSession, error: error } = await useLazyAsyncData<ImgSe
         end_time: props.sessionQuery?.tEnd,
         source_name: props.sessionQuery?.sourceName,
         sort: sort.value.column || undefined,
-        order: sort.value.direction
+        order: sort.value.direction,
+        burst_only: props.frb && burstOnly.value ? true : undefined
       }
     }), {
-  watch: [() => page.value, () => props.sessionQuery, rowsPerPage, sort],
+  watch: [() => page.value, () => props.sessionQuery, rowsPerPage, sort, burstOnly],
   default: () => defaultImsSession
 })
 
-watch([() => props.sessionQuery, rowsPerPage, sort], () => {
+watch([() => props.sessionQuery, rowsPerPage, sort, burstOnly], () => {
   page.value = 1
 })
 
@@ -124,6 +157,7 @@ const tableData = computed(() => {
         <span class="text-sm leading-5">Rows per page</span>
         <USelect v-model="rowsPerPage" :options="availrowsPerPage"></USelect>
         <slot name="toolbar" />
+        <UCheckbox v-if="frb" v-model="burstOnly" label="Only sessions the burst crosses" class="ml-2" />
         <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
           label="Default order" @click="sort = { column: '', direction: 'asc' }" />
       </div>
@@ -139,6 +173,17 @@ const tableData = computed(() => {
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
       v-model="selectedRow" v-model:sort="sort" sort-mode="manual" :ui="{ checkbox: { padding: 'hidden' } }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
+
+      <template #coverage-data="{ row }">
+        <div v-if="coverage(row)" class="relative h-5 min-w-48 w-full rounded-sm bg-gray-100 dark:bg-gray-800 overflow-hidden"
+          :title="coverage(row)!.title" :aria-label="coverage(row)!.title" role="img">
+          <div class="absolute inset-y-0 bg-primary-500/35 dark:bg-primary-400/30"
+            :style="{ left: `${coverage(row)!.session.left}%`, width: `${coverage(row)!.session.width}%` }" />
+          <div class="absolute inset-y-1 rounded-sm"
+            :class="coverage(row)!.hit ? 'bg-amber-400 dark:bg-amber-400' : 'bg-amber-400/35 dark:bg-amber-400/30'"
+            :style="{ left: `${coverage(row)!.burst.left}%`, width: `${coverage(row)!.burst.width}%` }" />
+        </div>
+      </template>
 
       <template #start_time-data="{row}">
         {{ tz.dateTime(row.start_time) }} {{ tz.zoneName(row.start_time) }}

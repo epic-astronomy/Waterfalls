@@ -189,7 +189,8 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
   <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-sm">
       <span>Session timeline, {{ CELL_S / 60 }} min per cell <span class="text-gray-500 dark:text-gray-400">(← → to step)</span></span>
-      <NuxtLink :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`" class="text-primary-500 hover:underline">All bands, dedispersed</NuxtLink>
+      <UButton :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`" icon="i-heroicons-squares-2x2-20-solid"
+        trailing-icon="i-heroicons-arrow-right-20-solid" size="sm" color="primary" variant="solid" label="Show all bands, dedispersed" />
     </div>
     <div class="space-y-1.5">
       <div v-for="row in rows" :key="row.id" class="flex items-start gap-2">

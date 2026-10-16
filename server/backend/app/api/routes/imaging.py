@@ -3,7 +3,9 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import select, func, text
 
 from sqlalchemy.dialects.postgresql import TEXT
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+
+from sqlalchemy import and_, false, true
 
 
 from app.api.deps import UserDep, WatchListPagiDep
@@ -29,12 +31,32 @@ from app.models.epic_data import (
 
 router = APIRouter()
 from app.core.config import settings
+from app.frb.products import K_DM, load_event
 
 # cfreq is stored as real, so match bands on the recovered first channel
 digest_chan0 = (
     func.round(epic_daily_digest_table.cfreq / settings.CHAN_BW_HZ)
     - settings.DIGEST_CHAN_OFFSET
 )
+
+
+def burst_condition(session, source_name: str):
+    """SQL condition: the session spans part of the burst's crossing of its
+    band, from the top edge at DM - error to the bottom edge at DM + error.
+    False when the source is not a CHIME/FRB event with a DM."""
+    event_id = session.execute(
+        text("select id from public.epic_watchdog where source = :s and event_type = 'FRB detection' "
+             "order by id desc limit 1"), dict(s=source_name)).scalar()
+    event = load_event(session, event_id) if event_id is not None else None
+    if event is None:
+        return false()
+    t_inf = event["t_inf"].replace(tzinfo=timezone.utc).timestamp()
+    f_lo = epic_img_metadata.chan0 * settings.CHAN_BW_HZ / 1e6
+    f_hi = f_lo + epic_img_metadata.n_chan * epic_img_metadata.chan_bw_hz / 1e6
+    first = t_inf + K_DM * max(event["dm"] - event["dm_err"], 0.0) / (f_hi * f_hi)
+    last = t_inf + K_DM * (event["dm"] + event["dm_err"]) / (f_lo * f_lo)
+    return and_(func.extract("epoch", epic_img_metadata.session_start) < last,
+                func.extract("epoch", epic_img_metadata.session_end) > first)
 
 
 @router.get("/sessions/", response_model=epic_img_session_public)
@@ -45,7 +67,12 @@ async def get_imaging_sessions(
     obs_period: ObsPeriodDep,
     sort: str | None = None,
     order: Literal["asc", "desc"] = "asc",
+    burst_only: bool = False,
 ):
+    """Imaging sessions of a source within a period. With `burst_only`, for a
+    CHIME/FRB source, only the sessions during which the burst crosses their
+    band, allowing for the DM error."""
+    burst_cond = burst_condition(session, obs_period.source_name) if burst_only else true()
     sortable = {
         "start_time": epic_img_metadata.session_start,
         "end_time": epic_img_metadata.session_end,
@@ -86,6 +113,7 @@ async def get_imaging_sessions(
         )
         .where(epic_img_metadata.source_name == obs_period.source_name)
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
+        .where(burst_cond)
     )
     count = session.exec(stmnt).one()
     stmnt = (
@@ -107,6 +135,7 @@ async def get_imaging_sessions(
         )
         .where(epic_img_metadata.source_name == obs_period.source_name)
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
+        .where(burst_cond)
         .order_by(*ordering)
         .offset(pagination.skip)
         .limit(pagination.limit)
