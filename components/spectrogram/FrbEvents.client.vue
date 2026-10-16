@@ -64,7 +64,7 @@ const eventRows = computed(() => (events.value?.data ?? []).map(e => ({
   ...e,
   dm_text: e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '',
   snr_text: e.max_snr != null ? e.max_snr.toFixed(1) : '',
-  products: e.computed_at ? `${e.n_bands} band${e.n_bands == 1 ? '' : 's'}` : (e.watch_status == 'watching' ? 'Watching' : 'Pending'),
+  products: e.computed_at ? `${e.n_bands} band${e.n_bands == 1 ? '' : 's'}` : (e.watch_status == 'watching' ? 'Active' : 'Pending'),
   class: e.id == selectedId.value ? 'bg-primary-50 dark:bg-primary-900/30' : ''
 })))
 const eventColumns = computed(() => [

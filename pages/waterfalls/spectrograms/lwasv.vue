@@ -202,27 +202,25 @@ useSeoMeta({
         </div>
       </template>
       <template #srcSelection>
-        <div class="mt-2 flex flex-col lg:flex-row gap-2 items-start">
-          <UCard class="w-full lg:w-auto shrink-0" :ui="{ body: { padding: 'p-3' } }">
-            <SpectrogramCalendar v-model="listDay" :marks="frbDays" @range="(a, b) => markRange = [a, b]">
+        <SpectrogramWatchList v-model="watchSource" :day="listDay" class="mt-2">
+          <template #toolbar>
+            <SpectrogramDayPicker v-model="listDay" :marks="frbDays" class="ml-2" @range="(a, b) => markRange = [a, b]">
               <template #legend>
                 <span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />CHIME/FRB event</span>
               </template>
-            </SpectrogramCalendar>
-          </UCard>
-          <SpectrogramWatchList v-model="watchSource" :day="listDay" class="flex-1 min-w-0" />
-        </div>
+            </SpectrogramDayPicker>
+          </template>
+        </SpectrogramWatchList>
       </template>
 
       <template #sessionSelection>
         <div v-if="watchSource" class="mt-2">
-          <div class="flex flex-col lg:flex-row gap-2 items-start">
+          <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession">
             <!-- FRB watches last hours, so their sessions are always listed in full -->
-            <UCard v-if="!isFrb" class="w-full lg:w-auto shrink-0" :ui="{ body: { padding: 'p-3' } }">
-              <SpectrogramCalendar v-model="sessionDay" :min="watchFirstDay" :max="watchLastDay" />
-            </UCard>
-            <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession" class="flex-1 min-w-0" />
-          </div>
+            <template v-if="!isFrb" #toolbar>
+              <SpectrogramDayPicker v-model="sessionDay" :min="watchFirstDay" :max="watchLastDay" class="ml-2" />
+            </template>
+          </SpectrogramSessionList>
         </div>
         <div v-else="watchSource">
           <UCard>

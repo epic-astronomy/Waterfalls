@@ -26,7 +26,7 @@ const columns = [{
   sortable: true
 }, {
   key: 'watch_status',
-  label: 'Status',
+  label: 'Observation Status',
   sortable: true
 }, {
   key: 't_start',
@@ -130,8 +130,9 @@ const tableData = computed(() => {
   }">
     <div class="flex flex-wrap justify-between items-center gap-3 px-3 py-3.5 border-b border-gray-200 dark:border-gray-700">
       <div class="flex items-center gap-1.5">
-        <span class="text-sm leading-5"> Rows per page:</span>
+        <span class="text-sm leading-5">Rows per page</span>
         <USelect v-model="rowsPerPage" :options="availrowsPerPage"></USelect>
+        <slot name="toolbar" />
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
@@ -165,7 +166,7 @@ const tableData = computed(() => {
       </template>
 
       <template #watch_status-data="{ row }">
-        <UBadge variant="soft" :label="row.watch_status == 'watching' ? 'Watching' : 'Completed'"
+        <UBadge variant="soft" :label="row.watch_status == 'watching' ? 'Active' : 'Completed'"
           :color="row.watch_status == 'watching' ? 'primary' : 'orange'" size="xs"></UBadge>
       </template>
 

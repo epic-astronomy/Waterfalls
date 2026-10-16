@@ -121,8 +121,9 @@ const tableData = computed(() => {
   }">
     <div class="flex justify-between grid-cols-2 px-3 py-3.5 border-b border-gray-200 dark:border-gray-700">
       <div class="flex items-center gap-1.5">
-        <span class="text-sm leading-5"> Rows per page:</span>
+        <span class="text-sm leading-5">Rows per page</span>
         <USelect v-model="rowsPerPage" :options="availrowsPerPage"></USelect>
+        <slot name="toolbar" />
         <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
           label="Default order" @click="sort = { column: '', direction: 'asc' }" />
       </div>
