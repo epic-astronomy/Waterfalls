@@ -97,7 +97,9 @@ function key(e: KeyboardEvent, which: 'lo' | 'hi') {
   else set(sel.value[0], sel.value[1] + d)
 }
 
-const hhmm = (t: number) => new Date(t).toISOString().slice(11, 16)
+// labels in the time zone chosen on the page
+const tz = useTimeZone()
+const hhmm = (t: number) => tz.clock(t).slice(0, 5)
 </script>
 
 <template>
@@ -118,7 +120,7 @@ const hhmm = (t: number) => new Date(t).toISOString().slice(11, 16)
       <div v-for="h in (['lo', 'hi'] as const)" :key="h" role="slider" tabindex="0"
         :aria-label="h == 'lo' ? 'Start of the zoom window' : 'End of the zoom window'"
         :aria-valuemin="t0" :aria-valuemax="t1" :aria-valuenow="h == 'lo' ? sel[0] : sel[1]"
-        :aria-valuetext="hhmm(h == 'lo' ? sel[0] : sel[1]) + ' UTC'"
+        :aria-valuetext="hhmm(h == 'lo' ? sel[0] : sel[1]) + ' ' + tz.zoneName(sel[0])"
         class="absolute inset-y-0 -ml-1.5 w-3 rounded-sm bg-primary-500 dark:bg-primary-400 cursor-ew-resize flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
         :style="{ left: `${100 * (h == 'lo' ? lo : hi)}%` }"
         @pointerdown="start($event, h)" @pointermove="move" @pointerup="end" @pointercancel="end" @keydown="key($event, h)">
@@ -128,7 +130,7 @@ const hhmm = (t: number) => new Date(t).toISOString().slice(11, 16)
     <div class="mt-1 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
       <span>{{ hhmm(t0) }}</span>
       <span class="flex items-center gap-2">
-        <span class="font-medium text-gray-700 dark:text-gray-200">{{ hhmm(sel[0]) }} to {{ hhmm(sel[1]) }} UTC</span>
+        <span class="font-medium text-gray-700 dark:text-gray-200">{{ hhmm(sel[0]) }} to {{ hhmm(sel[1]) }} {{ tz.zoneName(sel[0]) }}</span>
         <UButton v-if="range" size="2xs" color="gray" variant="ghost" label="Full day" @click="range = null" />
       </span>
       <span>{{ hhmm(t1) }}</span>

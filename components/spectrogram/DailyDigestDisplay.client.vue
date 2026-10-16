@@ -12,6 +12,8 @@ const colorMode = useColorMode()
 
 
 const rtConfig = useRuntimeConfig()
+// days are UTC days, as the digest is made per UTC day; times show in the chosen zone
+const tz = useTimeZone()
 
 const digestDay = ref<string | null>(null)
 // days with a digest, for the dots on the calendar, fetched for the days in view
@@ -207,7 +209,7 @@ const paper = computed(() => colorMode.value == 'dark' ? '#131826' : 'rgb(255,25
 const bandKeys = computed(() => Object.keys(plotTraces.value).map(Number).sort((a, b) => b - a))
 const plotHeight = computed(() => bandKeys.value.length * panelPx.value + PLOT_MARGIN_PX)
 watch(plotHeight, () => nextTick(updatePlot))
-const utcStr = (ms: number) => new Date(ms).toISOString().slice(0, 23).replace('T', ' ')
+const plotStr = (ms: number) => tz.plotTime(ms)
 
 // zoom window from the slider, in UTC ms; null for the whole day
 const zoom = ref<[number, number] | null>(null)
@@ -227,9 +229,9 @@ const plotlyLayout = computed(() => {
     const top = 1 - i / n, bottom = 1 - (i + 1) / n
     layout[`xaxis${s}`] = {
       anchor: `y${s}`, type: 'date', matches: i == 0 ? undefined : 'x', showticklabels: i == n - 1,
-      title: i == n - 1 ? { text: 'Time (UTC)', font: { ...font, size: 16 } } : undefined,
+      title: i == n - 1 ? { text: `Time (${tz.zoneName()})`, font: { ...font, size: 16 } } : undefined,
       tickfont: font, tickcolor: ink.value, linecolor: ink.value, showline: true, mirror: true, ticks: 'outside', showgrid: false,
-      range: zoom.value ? zoom.value.map(utcStr) : undefined
+      range: zoom.value ? zoom.value.map(plotStr) : undefined
     }
     layout[`yaxis${s}`] = {
       anchor: `x${s}`, domain: [bottom, top], tickfont: font, tickcolor: ink.value, linecolor: ink.value,
@@ -346,7 +348,7 @@ function bandImages(g: number) {
     }
     ctx.putImageData(img, 0, 0)
     return {
-      source: canvas.toDataURL(), xref: `x${b.s}`, yref: `y${b.s}`, x: utcStr(b.x0), y: b.top, sizex: b.width, sizey: b.height,
+      source: canvas.toDataURL(), xref: `x${b.s}`, yref: `y${b.s}`, x: plotStr(b.x0), y: b.top, sizex: b.width, sizey: b.height,
       xanchor: 'left', yanchor: 'top', sizing: 'stretch', layer: 'below'
     }
   })
@@ -361,9 +363,9 @@ var plotlyTraces = computed(() => {
     return {
       name: (cfreq / 1e6).toFixed(2) + ' MHz',
       z, type: 'heatmap',
-      x: trace.img_time, y: trace.freqs, xaxis: `x${s}`, yaxis: `y${s}`,
+      x: trace.img_time.map(tz.plotTime), y: trace.freqs, xaxis: `x${s}`, yaxis: `y${s}`,
       hoverongaps: false, opacity: 0, showscale: false, zsmooth: false,
-      hovertemplate: '%{x|%H:%M:%S} UTC<br>%{y:.2f} MHz<extra></extra>'
+      hovertemplate: `%{x|%H:%M:%S} ${tz.zoneName()}<br>%{y:.2f} MHz<extra></extra>`
     }
   })
 })
@@ -453,6 +455,7 @@ watch(() => dataError, (n, _) => {
   }
 })
 
+watch(tz.mode, () => updatePlot())
 watch(() => colorMode.value, (n, o) => {
   updatePlot()
 })
@@ -519,11 +522,12 @@ onBeforeUnmount(() => {
         </div>
         <div class="flex items-center gap-2">
           <span class="text-sm text-gray-600 dark:text-gray-300">Colour exponent</span>
-          <URange v-model="stretchPos" :min="-100" :max="200" :step="1" size="sm" class="w-40" aria-label="Colour exponent" />
+          <URange v-model="stretchPos" :min="-100" :max="200" :step="1" size="sm" class="w-28" aria-label="Colour exponent" />
           <span class="w-10 text-sm tabular-nums">{{ exponent.toFixed(2) }}</span>
           <UButton v-if="stretchPos != STRETCH_DEFAULT" size="2xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
             aria-label="Reset the colour exponent" @click="stretchPos = STRETCH_DEFAULT" />
         </div>
+    <template #right><TimeZoneToggle /></template>
   </PageToolbar>
   <UDashboardPanelContent>
     <!-- always in the page, so the resize observer can watch it -->

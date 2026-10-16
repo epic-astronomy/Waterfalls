@@ -13,10 +13,10 @@
     <template #left>
       <div class="flex-1 min-w-0 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-3 py-2
         bg-white dark:bg-gray-900 ring-1 ring-gray-200 dark:ring-gray-800 rounded-md shadow">
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0">
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-2 min-w-0">
           <slot />
         </div>
-        <div v-if="$slots.right" class="flex items-center gap-2 shrink-0">
+        <div v-if="$slots.right" class="ml-auto flex items-center gap-2 shrink-0">
           <slot name="right" />
         </div>
       </div>
