@@ -102,7 +102,7 @@ const hhmm = (t: number) => new Date(t).toISOString().slice(11, 16)
 
 <template>
   <div class="select-none">
-    <div ref="track" class="relative h-14 rounded-md bg-gray-50 dark:bg-gray-800/60 ring-1 ring-gray-200 dark:ring-gray-700 touch-none"
+    <div ref="track" class="relative h-[42px] rounded-md bg-gray-50 dark:bg-gray-800/60 ring-1 ring-gray-200 dark:ring-gray-700 touch-none"
       @pointerdown.self="jump">
       <svg class="absolute inset-0 h-full w-full pointer-events-none" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">
         <path :d="paths.area" class="fill-primary-500/15 dark:fill-primary-400/20" />
