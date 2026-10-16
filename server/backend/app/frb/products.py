@@ -29,8 +29,9 @@ from app.frb.source_pixel import fetch_source_stokes_i
 
 log = logging.getLogger(__name__)
 
-VERSION = 5
+VERSION = 6
 K_DM = 4148.808  # dispersion delay constant, s MHz^2 cm^3 / pc
+CHIME_REF_MHZ = 400.0  # frequency of the arrival time CHIME/FRB publishes
 N_POL = 4  # XX, YY, Re(XY), Im(XY) per channel in epic_pixels.pixel_values
 MIN_HALF_WINDOW_S = 60.0
 MAX_HALF_WINDOW_S = 900.0
@@ -191,10 +192,19 @@ def load_event(session: Session, event_id: int) -> dict | None:
     dm = voevent_param(row[5], "dm")
     if dm is None:
         return None
-    t_inf = voevent_param(row[5], "timestamp_utc_inf_freq")
-    t_inf = datetime.fromisoformat(t_inf).replace(tzinfo=None) if t_inf else row[2]
+    # CHIME/FRB measures the topocentric arrival at the bottom of its band,
+    # 400 MHz (timestamp_utc); the time at infinite frequency is derived. Use
+    # the measured time as the reference, with our dispersion constant.
+    t_ref = voevent_param(row[5], "timestamp_utc")
+    if t_ref:
+        t_ref = datetime.fromisoformat(t_ref).replace(tzinfo=None)
+        t_inf = t_ref - timedelta(seconds=K_DM * float(dm) / CHIME_REF_MHZ**2)
+    else:
+        t_inf = voevent_param(row[5], "timestamp_utc_inf_freq")
+        t_inf = datetime.fromisoformat(t_inf).replace(tzinfo=None) if t_inf else row[2]
+        t_ref = t_inf + timedelta(seconds=K_DM * float(dm) / CHIME_REF_MHZ**2)
     return dict(
-        id=row[0], source=row[1], t_inf=t_inf, t_start=row[3], t_end=row[4],
+        id=row[0], source=row[1], t_inf=t_inf, t_ref=t_ref, f_ref_mhz=CHIME_REF_MHZ, t_start=row[3], t_end=row[4],
         dm=float(dm), dm_err=float(voevent_param(row[5], "dm_error") or 0.0),
         ra=float(row[6]), dec=float(row[7]),
     )

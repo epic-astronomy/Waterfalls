@@ -1,35 +1,73 @@
 import base64
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from app.api.deps import SessionDep, UserDep
 from app.core.config import settings
-from app.frb.products import load_event
+from app.frb.products import CHIME_REF_MHZ, load_event
 
 router = APIRouter()
 
 
+def _param(name: str) -> str:
+    return f"""substring(w.voevent::text from '<Param name="{name}" value="([^"]*)"')"""
+
+
+# Columns of the event list, as SQL, so that sorting happens before pagination
+EVENT_COLUMNS = {
+    "source": "w.source",
+    "event_time": "w.event_time",
+    "t_ref": f"{_param('timestamp_utc')}::timestamp",
+    "dm": f"{_param('dm')}::float",
+    "dm_err": f"{_param('dm_error')}::float",
+    "n_bands": "coalesce(p.n_bands, 0)",
+    "max_snr": "p.max_snr",
+    "computed_at": "p.computed_at",
+}
+# the table's display columns sort by the value behind them
+SORT_ALIASES = {"dm_text": "dm", "products": "n_bands", "snr_text": "max_snr"}
+
+
 @router.get("/events/")
-async def get_frb_events(session: SessionDep, current_user: UserDep):
-    """CHIME/FRB watches with a summary of their dedispersed products"""
+async def get_frb_events(
+    session: SessionDep,
+    current_user: UserDep,
+    page: int = Query(1, ge=1),
+    nrows: int = Query(10, ge=1, le=100),
+    sort: str | None = None,
+    order: Literal["asc", "desc"] = "desc",
+):
+    """CHIME/FRB watches with a summary of their dedispersed products, a page
+    at a time. By default the most recent trigger comes first; a column name
+    in `sort` orders by that column instead."""
+    schema = settings.EPIC_DATA_SCHEMA
+    count = session.execute(
+        text("select count(*) from public.epic_watchdog where event_type = 'FRB detection'")
+    ).scalar_one()
+    key = SORT_ALIASES.get(sort, sort)
+    if key in EVENT_COLUMNS:
+        ordering = f"{EVENT_COLUMNS[key]} {'asc' if order == 'asc' else 'desc'} nulls last, w.id desc"
+    else:
+        ordering = "w.event_time desc, w.id desc"
+    names = list(EVENT_COLUMNS)
     rows = session.execute(
         text(
-            "select w.id, w.source, w.event_time, w.t_start, w.t_end, w.watch_status, "
-            "count(p.chan0) filter (where p.status = 'ok'), max(p.peak_snr), max(p.created_at), max(p.dm), max(p.dm_err) "
+            f"select w.id, w.t_start, w.t_end, w.watch_status, {', '.join(EVENT_COLUMNS.values())} "
             "from public.epic_watchdog w "
-            f"left join {settings.EPIC_DATA_SCHEMA}.epic_frb_products p on p.event_id = w.id "
-            "where w.event_type = 'FRB detection' group by w.id, w.source, w.event_time, w.t_start, w.t_end, w.watch_status "
-            "order by w.event_time desc"
-        )
+            "left join (select event_id, count(*) filter (where status = 'ok') n_bands, max(peak_snr) max_snr, "
+            f"max(created_at) computed_at from {schema}.epic_frb_products group by event_id) p on p.event_id = w.id "
+            "where w.event_type = 'FRB detection' "
+            f"order by {ordering} limit :limit offset :offset"
+        ),
+        dict(limit=nrows, offset=(page - 1) * nrows),
     ).all()
-    return [
-        dict(
-            id=r[0], source=r[1], event_time=r[2], t_start=r[3], t_end=r[4], watch_status=r[5],
-            n_bands=r[6], max_snr=r[7], computed_at=r[8], dm=r[9], dm_err=r[10],
-        )
+    data = [
+        dict(id=r[0], t_start=r[1], t_end=r[2], watch_status=r[3], **dict(zip(names, r[4:])), f_ref_mhz=CHIME_REF_MHZ)
         for r in rows
     ]
+    return dict(data=data, count=count)
 
 
 @router.get("/events/{event_id}")

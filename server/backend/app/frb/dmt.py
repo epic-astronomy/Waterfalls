@@ -5,14 +5,15 @@ Dispersion measure transform of CHIME/FRB watches, for every pixel of the
 The search follows the LOFAR analysis of FRB 20180916B (Pleunis et al. 2021,
 ApJL 911, L3): incoherent dedispersion over a range of trial DMs around the
 known DM, a boxcar search of each dedispersed time series, an S/N threshold
-of 7, RFI masked before dedispersion, and arrival times referenced to
-infinite frequency. Here:
+of 7, RFI masked before dedispersion, and arrival times referenced to a
+fixed frequency. Here the reference is 400 MHz, where CHIME/FRB measures the
+arrival time it publishes, so a burst lies at 0 s at every trial DM:
 
 1. Each band's dynamic spectrum of each pixel, at the full 83.6 ms
    resolution, is cleaned with the CHIME/FRB L1 chain (rfi.py).
 2. Each channel is shifted to the lowest trial DM, and the FDMT (fdmt.py)
    sums every track over the residual DM range. Row d of a band's transform
-   becomes a time series indexed by the burst's arrival at infinite frequency.
+   becomes a time series indexed by the burst's arrival at 400 MHz.
 3. Each band is searched with boxcars up to its smearing, and is smoothed to
    its smearing for the combination. Bands are combined on a common DM grid
    and time axis as sum(S/N_b) / sqrt(N). The hours of delay between bands
@@ -37,11 +38,11 @@ from app.core.config import settings
 from app.frb import rfi
 from app.frb.fdmt import fdmt
 from app.frb.source_pixel import fetch_source_stokes_i
-from app.frb.products import FETCH_CHUNK_S, K_DM, N_POL, _robust, load_event
+from app.frb.products import CHIME_REF_MHZ, FETCH_CHUNK_S, K_DM, N_POL, _robust, load_event
 
 log = logging.getLogger(__name__)
 
-VERSION = 4
+VERSION = 5
 DM_STEP = 0.05
 TAU_HALF = 60.0  # shortest span of arrival offsets searched and stored, s
 MAX_TAU_HALF = 900.0
@@ -210,7 +211,8 @@ def band_dmt(session: Session, event: dict, band: dict, dm_half: float) -> dict:
 
         transform = fdmt(image, edges, d_max)  # [d_max + 1, n_t], time = arrival at the bottom edge
 
-        # resample every trial DM onto arrival time at infinite frequency
+        # resample every trial DM onto arrival time at 400 MHz relative to the
+        # time CHIME measured there, so a burst sits at 0 s at every trial DM
         snr_map = np.full((len(x_grid), len(tau_grid)), np.nan)
         snr_dm = np.full(len(x_grid), np.nan)
         best = (np.nan, 0.0, 0.0, 0)
@@ -223,7 +225,7 @@ def band_dmt(session: Session, event: dict, band: dict, dm_half: float) -> dict:
                 row = transform[d]
                 # arrival at the bottom edge = tau + K x / f_bottom^2 in this frame
                 x_d = d * dt / (K_DM * span)
-                tau_row = rel - K_DM * x_d / edges[0] ** 2
+                tau_row = rel - K_DM * x_d / edges[0] ** 2 + K_DM * (dm_lo + x_d - dm) / CHIME_REF_MHZ**2
                 off = np.abs(tau_row) > search_half + w_match * dt
                 on = np.abs(tau_row) <= search_half
                 matched = _normalise(_boxcar(row, w_match), off)
@@ -331,7 +333,8 @@ def summarise(event: dict, pos, bands: list[dict], comb: dict) -> dict:
     dm_half = dm_half_range(event["dm_err"])
     return dict(
         version=VERSION, source=event["source"], dm_chime=event["dm"], dm_err_chime=event["dm_err"],
-        t_inf=event["t_inf"].isoformat(), dm_lo=event["dm"] - dm_half, dm_hi=event["dm"] + dm_half, dm_step=DM_STEP,
+        t_inf=event["t_inf"].isoformat(), t_ref=event["t_ref"].isoformat(), f_ref_mhz=event["f_ref_mhz"],
+        dm_lo=event["dm"] - dm_half, dm_hi=event["dm"] + dm_half, dm_step=DM_STEP,
         search_tau_s=SEARCH_TAU, snr_threshold=SNR_THRESHOLD, bands=band_rows, combined=combined,
         localisation=localisation, detected=detected,
         method=dict(rfi="CHIME/FRB L1 clipping and detrending chain (Rafiei-Ravandi & Smith 2023)",

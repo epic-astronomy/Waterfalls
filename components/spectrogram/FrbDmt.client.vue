@@ -17,7 +17,7 @@ interface DmtBand {
   width_s?: number | null, masked_frac?: number | null, sefd_jy?: number | null, fluence_limit_jyms?: number | null
 }
 interface DmtSummary {
-  source: string, dm_chime: number, dm_err_chime: number, t_inf: string, dm_lo: number, dm_hi: number, dm_step: number,
+  source: string, dm_chime: number, dm_err_chime: number, t_inf: string, t_ref?: string, f_ref_mhz?: number, dm_lo: number, dm_hi: number, dm_step: number,
   search_tau_s: number, snr_threshold: number, bands: DmtBand[],
   combined: { snr: number | null, dm: number | null, tau_s: number | null, n_bands: number } | null,
   localisation: { centre_snr: number | null, best_other_snr: number | null, median_other_snr: number | null, centre_is_brightest: boolean } | null,
@@ -197,7 +197,7 @@ function drawMap() {
   Plotly.react(el, traces, {
     height: 360, margin: { l: 70, r: 10, t: 10, b: 45 }, paper_bgcolor: paper.value, plot_bgcolor: paper.value, font: font.value,
     hovermode: false, showlegend: false, coloraxis: colorAxis.value,
-    xaxis: axis('Arrival at infinite frequency relative to CHIME (s)'), yaxis: axis('Trial DM (pc cm⁻³)'),
+    xaxis: axis('Arrival at 400 MHz relative to CHIME (s)'), yaxis: axis('Trial DM (pc cm⁻³)'),
     shapes: [-s.search_tau_s, s.search_tau_s].map(x => ({ type: 'line', xref: 'x', yref: 'paper', x0: x, x1: x, y0: 0, y1: 1,
       line: { color: dark.value ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)', dash: 'dash', width: 1 } }))
   }, { displaylogo: false, responsive: true })
@@ -217,7 +217,7 @@ function drawBandMaps() {
     const s = i == 0 ? '' : String(i + 1)
     const top = 1 - i / n
     const b = bandOf(t.chan0)
-    layout[`xaxis${s}`] = { ...axis(i == n - 1 ? 'Arrival at infinite frequency relative to CHIME (s)' : ''), anchor: `y${s}` }
+    layout[`xaxis${s}`] = { ...axis(i == n - 1 ? 'Arrival at 400 MHz relative to CHIME (s)' : ''), anchor: `y${s}` }
     layout[`yaxis${s}`] = { ...axis('DM'), anchor: `x${s}`, domain: [top - 1 / n + gap, top - gap] }
     layout.annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: top - gap, xanchor: 'left', yanchor: 'bottom', showarrow: false,
       text: b ? `${bandName(b)} · smearing ${fmt(b.smear_s)} s` : '', font: { color: ink.value, size: 12 } })
@@ -249,7 +249,7 @@ onBeforeUnmount(() => observer?.disconnect())
           {{ fmt(summary.dm_hi, 1) }} pc cm⁻³ in steps of {{ summary.dm_step }}, at the full 83.6 ms resolution. RFI is masked
           and the data detrended with the CHIME/FRB clipping and detrending chain, each band is transformed with the FDMT, and
           its dedispersed time series are searched with boxcars up to its smearing. The bands are then combined on a common time
-          axis, referenced to infinite frequency, which pins down the DM far more tightly than one band. The search window
+          axis, referenced to the arrival CHIME measured at 400 MHz, which pins down the DM far more tightly than one band. The search window
           spans {{ summary.search_tau_s }} s around the CHIME arrival beyond the smearing, and the threshold is S/N
           {{ summary.snr_threshold }}.
         </p>

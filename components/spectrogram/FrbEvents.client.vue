@@ -7,10 +7,11 @@ import Plotly from 'plotly.js-dist-min'
 // the backend when a watch ends.
 
 interface FrbEventItem {
-  id: number, source: string, event_time: string, t_start: string, t_end: string,
+  id: number, source: string, event_time: string, t_ref: string | null, f_ref_mhz: number, t_start: string, t_end: string,
   watch_status: string, n_bands: number, max_snr: number | null, computed_at: string | null,
   dm: number | null, dm_err: number | null
 }
+interface FrbEventPage { data: FrbEventItem[], count: number }
 interface FrbBand {
   chan0: number, status: string, note: string | null, f_lo_mhz: number, chan_bw_hz: number,
   n_chan: number, dt_s: number, t0_rel_s: number, n_time: number, smear_s: number,
@@ -19,7 +20,7 @@ interface FrbBand {
   peak_t_s: number | null, created_at: string
 }
 interface FrbEventProducts {
-  id: number, source: string, t_inf: string, t_start: string, t_end: string,
+  id: number, source: string, t_inf: string, t_ref: string, f_ref_mhz: number, t_start: string, t_end: string,
   dm: number, dm_err: number, computed: boolean, bands: FrbBand[]
 }
 
@@ -30,14 +31,27 @@ const colorMode = useColorMode()
 const dark = computed(() => colorMode.value == 'dark')
 
 const K_DM = 4148.808
+const tz = useTimeZone()
 
-const { data: events, pending: eventsPending } = await useLazyAsyncData<FrbEventItem[]>(
-  'frb-events', () => $fetch(rtConfig.public.fastapiBase + '/frb/events/'), { default: () => [] })
+// Events a page at a time, sorted by the server. Without a sort column the
+// most recent trigger comes first.
+const page = ref(1)
+const rowsPerPage = ref(10)
+const availRowsPerPage = [5, 10, 25]
+const sort = ref<{ column: string, direction: 'asc' | 'desc' }>({ column: '', direction: 'asc' })
+const { data: events, pending: eventsPending } = await useLazyAsyncData<FrbEventPage>(
+  'frb-events',
+  () => $fetch(rtConfig.public.fastapiBase + '/frb/events/', {
+    query: { page: page.value, nrows: rowsPerPage.value, sort: sort.value.column || undefined, order: sort.value.direction }
+  }),
+  { watch: [page, rowsPerPage, sort], default: () => ({ data: [], count: 0 }) })
+watch([rowsPerPage, sort], () => { page.value = 1 })
+const pageTotal = computed(() => events.value.count)
+const pageFrom = computed(() => Math.min((page.value - 1) * rowsPerPage.value + 1, pageTotal.value))
+const pageTo = computed(() => Math.min(page.value * rowsPerPage.value, pageTotal.value))
 
+// Nothing is shown until an event is chosen, from the table or a link
 const selectedId = ref<number | null>(Number(route.query.event) || null)
-watch(events, (evs) => {
-  if (!selectedId.value && evs?.length) selectedId.value = evs[0].id
-}, { immediate: true })
 watch(selectedId, id => router.replace({ query: { ...route.query, event: id ?? undefined } }))
 
 const { data: product, pending: productPending } = await useLazyAsyncData<FrbEventProducts | null>(
@@ -46,20 +60,21 @@ const { data: product, pending: productPending } = await useLazyAsyncData<FrbEve
   { watch: [selectedId], default: () => null }
 )
 
-const eventRows = computed(() => (events.value ?? []).map(e => ({
+const eventRows = computed(() => (events.value?.data ?? []).map(e => ({
   ...e,
   dm_text: e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '',
   snr_text: e.max_snr != null ? e.max_snr.toFixed(1) : '',
   products: e.computed_at ? `${e.n_bands} band${e.n_bands == 1 ? '' : 's'}` : (e.watch_status == 'watching' ? 'Watching' : 'Pending'),
   class: e.id == selectedId.value ? 'bg-primary-50 dark:bg-primary-900/30' : ''
 })))
-const eventColumns = [
-  { key: 'source', label: 'Event' },
-  { key: 'event_time', label: 'Trigger (UTC)' },
-  { key: 'dm_text', label: 'DM (pc cm⁻³)' },
-  { key: 'products', label: 'Products' },
-  { key: 'snr_text', label: 'Peak S/N' }
-]
+const eventColumns = computed(() => [
+  { key: 'source', label: 'Event', sortable: true },
+  { key: 't_ref', label: `Burst at 400 MHz (${tz.zoneName()})`, sortable: true },
+  { key: 'event_time', label: `Trigger (${tz.zoneName()})`, sortable: true },
+  { key: 'dm_text', label: 'DM (pc cm⁻³)', sortable: true },
+  { key: 'products', label: 'Products', sortable: true },
+  { key: 'snr_text', label: 'Peak S/N', sortable: true }
+])
 
 function b64ToF32(b64: string) {
   const bin = atob(b64)
@@ -68,7 +83,7 @@ function b64ToF32(b64: string) {
   return new Float32Array(u8.buffer)
 }
 
-const utcText = (t: string | Date) => new Date(String(t).replace(/Z?$/, 'Z')).toISOString().replace('T', ' ').slice(0, 19)
+const timeText = (t: string | Date) => `${tz.dateTime(t)} ${tz.zoneName(t)}`
 const bandRange = (b: FrbBand) => `${(b.f_lo_mhz + b.n_chan * b.chan_bw_hz / 1e6).toFixed(2)}–${b.f_lo_mhz.toFixed(2)} MHz`
 
 // Bands with data, highest frequency first, decoded once
@@ -92,7 +107,7 @@ const summary = computed(() => {
     const arrival = new Date(new Date(p.t_inf + 'Z').getTime() + 1e3 * K_DM * p.dm / fMid ** 2)
     return {
       band: bandRange(b),
-      arrival: arrival.toISOString().slice(11, 19),
+      arrival: tz.clock(arrival),
       smear: b.smear_s != null ? `${b.smear_s.toFixed(1)} s` : '',
       coverage: b.status == 'ok' && b.coverage != null ? `${Math.round(100 * b.coverage)}%` : '',
       flagged: b.status == 'ok' ? `${b.flagged?.length ?? 0} / ${b.n_chan}` : '',
@@ -101,15 +116,15 @@ const summary = computed(() => {
     }
   })
 })
-const summaryColumns = [
+const summaryColumns = computed(() => [
   { key: 'band', label: 'Band' },
-  { key: 'arrival', label: 'Expected arrival (UTC)' },
+  { key: 'arrival', label: `Expected arrival (${tz.zoneName()})` },
   { key: 'smear', label: 'Smearing' },
   { key: 'coverage', label: 'Coverage' },
   { key: 'flagged', label: 'Flagged channels' },
   { key: 'peak', label: 'Peak S/N (search window)' },
   { key: 'status', label: 'Status' }
-]
+])
 
 // Display controls
 const zMax = ref(5)
@@ -256,15 +271,44 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
 </script>
 
 <template>
-  <UDashboardNavbar title="FRB events - Long Wavelength Array, Sevilleta"></UDashboardNavbar>
+  <UDashboardNavbar title="FRB events - Long Wavelength Array, Sevilleta">
+    <template #right><TimeZoneToggle /></template>
+  </UDashboardNavbar>
   <UDashboardPanelContent>
     <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }" class="relative">
       <UProgress v-if="eventsPending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
-      <UTable :rows="eventRows" :columns="eventColumns" :loading="eventsPending"
+      <div class="flex flex-wrap justify-between items-center gap-3 px-1 pb-2">
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm leading-5">Rows per page</span>
+          <USelect v-model="rowsPerPage" :options="availRowsPerPage" />
+        </div>
+        <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
+          label="Default order" @click="sort = { column: '', direction: 'asc' }" />
+      </div>
+      <UTable :rows="eventRows" :columns="eventColumns" :loading="eventsPending" v-model:sort="sort" sort-mode="manual"
         :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No CHIME/FRB events have been watched.' }"
         @select="(row: FrbEventItem) => selectedId = row.id">
-        <template #event_time-data="{ row }">{{ utcText(row.event_time) }}</template>
+        <template #t_ref-data="{ row }">{{ row.t_ref ? tz.dateTime(row.t_ref) : '' }}</template>
+        <template #event_time-data="{ row }">{{ tz.dateTime(row.event_time) }}</template>
       </UTable>
+      <div class="flex justify-between flex-wrap items-center gap-2 px-1 pt-3 border-t border-gray-200 dark:border-gray-700">
+        <span class="text-sm leading-5">
+          Showing <span class="font-medium">{{ pageFrom }}</span> to <span class="font-medium">{{ pageTo }}</span>
+          of <span class="font-medium">{{ pageTotal }}</span> events
+        </span>
+        <UPagination v-if="pageTotal > rowsPerPage" v-model="page" :page-count="rowsPerPage" :total="pageTotal" :ui="{
+          wrapper: 'flex items-center gap-1',
+          rounded: '!rounded-full min-w-[32px] justify-center',
+          default: { activeButton: { variant: 'outline' } }
+        }" />
+      </div>
+    </UCard>
+
+    <UCard v-if="!selectedId" :ui="{ body: { padding: 'px-4 py-10' } }" class="mt-2">
+      <div class="flex flex-col items-center gap-2 text-center text-gray-500 dark:text-gray-400">
+        <UIcon name="i-heroicons-cursor-arrow-rays" class="w-8 h-8" />
+        <p class="text-base">Select an event in the table above to see its analysis.</p>
+      </div>
     </UCard>
 
     <UCard v-if="product" :ui="{ body: { padding: 'px-3 py-3 sm:p-4' } }" class="mt-2 relative">
@@ -273,8 +317,8 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
         <h2 class="text-xl font-semibold">{{ product.source }}</h2>
         <span class="text-sm text-gray-500 dark:text-gray-400">
           DM {{ product.dm.toFixed(2) }} ± {{ product.dm_err.toFixed(2) }} pc cm⁻³ ·
-          arrival at infinite frequency {{ utcText(product.t_inf) }} UTC ·
-          watched until {{ utcText(product.t_end) }} UTC
+          burst at {{ product.f_ref_mhz }} MHz {{ timeText(product.t_ref) }} (CHIME, topocentric) ·
+          watched until {{ timeText(product.t_end) }}
         </span>
       </div>
       <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">

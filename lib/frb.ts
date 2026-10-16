@@ -9,6 +9,11 @@ export interface FrbParams {
   t0: number // arrival time at infinite frequency, UTC ms
 }
 
+// CHIME/FRB publishes the topocentric arrival at 400 MHz (timestamp_utc), the
+// bottom of its band, where it is measured; its time at infinite frequency is
+// derived from that with CHIME's DM, so derive it here the same way
+export const CHIME_REF_MHZ = 400
+
 // UTC ms from the API ("2026-10-14T18:57:02.932") or a VOEvent
 // ("2026-10-14 18:57:02.931651+00:00"), both of which are in UTC
 export function utcMs(t: string) {
@@ -27,10 +32,12 @@ export function frbParams(src?: WatchListItem): FrbParams | null {
   const voevent = String(src!.voevent ?? '')
   const dm = parseFloat(voeventParam(voevent, 'dm') ?? '')
   if (!isFinite(dm)) return null
+  const tRef = voeventParam(voevent, 'timestamp_utc')
   return {
     dm,
     dmErr: parseFloat(voeventParam(voevent, 'dm_error') ?? '') || 0,
-    t0: utcMs(voeventParam(voevent, 'timestamp_utc_inf_freq') ?? String(src!.event_time))
+    t0: tRef ? utcMs(tRef) - 1e3 * K_DM * dm / CHIME_REF_MHZ ** 2
+      : utcMs(voeventParam(voevent, 'timestamp_utc_inf_freq') ?? String(src!.event_time))
   }
 }
 

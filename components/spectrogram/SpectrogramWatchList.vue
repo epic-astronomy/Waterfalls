@@ -2,6 +2,7 @@
 
 import type { WatchListItem, WatchList } from '~/types'
 const toast = useToast()
+const tz = useTimeZone()
 const rtConfig = useRuntimeConfig()
 const watchSource = defineModel({
   type: Object as PropType<WatchListItem>,
@@ -164,11 +165,11 @@ const tableData = computed(() => {
       </template>
 
       <template #t_start-data="{row}">
-        {{ new Date(row.t_start+'Z').toUTCString() }}
+        {{ tz.dateTime(row.t_start) }} {{ tz.zoneName(row.t_start) }}
       </template>
 
       <template #t_end-data="{row}">
-      {{ row.watch_status=='watching' && row.watch_mode=='continuous' ? '-' :  new Date(row.t_end+'Z').toUTCString() }}</template>
+      {{ row.watch_status=='watching' && row.watch_mode=='continuous' ? '' : `${tz.dateTime(row.t_end)} ${tz.zoneName(row.t_end)}` }}</template>
     </UTable>
 
     <template #footer>

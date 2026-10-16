@@ -5,6 +5,7 @@ import type { ImgSessionItem, ImgSessions, SessionQuery } from '~/types'
 import humanizeDuration from 'humanize-duration'
 import { CHAN_BW_HZ } from '~/lib/ndp'
 const toast = useToast()
+const tz = useTimeZone()
 const rtConfig = useRuntimeConfig()
 const selectedSession = defineModel({
   type: Object as PropType<ImgSessionItem>,
@@ -139,11 +140,11 @@ const tableData = computed(() => {
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
 
       <template #start_time-data="{row}">
-        {{ new Date(row.start_time+'Z').toUTCString() }}
+        {{ tz.dateTime(row.start_time) }} {{ tz.zoneName(row.start_time) }}
       </template>
 
       <template #end_time-data="{row}">
-        {{ new Date(row.end_time+'Z').toUTCString() }}
+        {{ tz.dateTime(row.end_time) }} {{ tz.zoneName(row.end_time) }}
       </template>
 
       <template #chan0-data="{row}">
@@ -155,7 +156,7 @@ const tableData = computed(() => {
       </template>
 
       <template #int_time-data="{row}">
-        {{ row.int_time * 1e3 }}
+        {{ (row.int_time * 1e3).toFixed(2) }}
       </template>
 
       <template #session_duration-data="{row}">

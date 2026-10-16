@@ -17,13 +17,14 @@ const props = defineProps({
 const emit = defineEmits<{ select: [start: string, end: string], clear: [] }>()
 
 const rtConfig = useRuntimeConfig()
+const tz = useTimeZone()
 
 const CELL_S = 180 // the longest spectrogram window, the long-integration cadence
 const CELLS_PER_ROW = 20 // one hour per row
 const ROW_S = CELL_S * CELLS_PER_ROW
 
 const isoUtc = (ms: number) => new Date(ms).toISOString().slice(0, 19)
-const hhmmss = (ms: number) => new Date(ms).toISOString().slice(11, 19)
+const hhmmss = (ms: number) => tz.clock(ms)
 const overlaps = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1
 
 const session = computed(() => ({
@@ -124,7 +125,7 @@ const rows = computed(() => {
         isShown: !!shown.value && overlaps(c0, c1, shown.value.start, shown.value.end)
       })
     }
-    out.push({ label: hhmmss(r).slice(0, 5), cells })
+    out.push({ id: r, label: hhmmss(r).slice(0, 5), cells })
   }
   return out
 })
@@ -160,14 +161,14 @@ const burstNote = computed(() => {
   const p = frb.value
   const b = burst.value
   if (!p || !b) return 'No DM in the VOEvent, so the burst arrival cannot be marked.'
-  const sweep = `At DM ${p.dm.toFixed(1)} ± ${p.dmErr.toFixed(1)} pc cm⁻³ the burst crosses ${band.value.fHi.toFixed(2)}–${band.value.fLo.toFixed(2)} MHz between ${hhmmss(b.start)} and ${hhmmss(b.end)} UTC`
+  const sweep = `At DM ${p.dm.toFixed(1)} ± ${p.dmErr.toFixed(1)} pc cm⁻³ the burst crosses ${band.value.fHi.toFixed(2)}–${band.value.fLo.toFixed(2)} MHz between ${hhmmss(b.start)} and ${hhmmss(b.end)} ${tz.zoneName(b.start)}`
   if (b.end < session.value.start) return `${sweep}, before this session started. Pick a cell to view the session.`
   if (b.start > session.value.end) return `${sweep}, after this session ended. Pick a cell to view the session.`
   return `${sweep}.`
 })
 
 function cellTitle(c: (typeof sessionCells.value)[number]) {
-  let t = `${hhmmss(c.t0)}–${hhmmss(c.t1)} UTC`
+  let t = `${hhmmss(c.t0)}–${hhmmss(c.t1)} ${tz.zoneName(c.t0)}`
   if (c.sub) t += ` · burst at ${c.sub.fTop.toFixed(2)}–${c.sub.fBot.toFixed(2)} MHz`
   else if (c.inBurst) t += ' · burst arrival (DM uncertainty)'
   return t
@@ -204,7 +205,7 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
       </span>
     </div>
     <div class="space-y-1.5">
-      <div v-for="row in rows" :key="row.label" class="flex items-start gap-2">
+      <div v-for="row in rows" :key="row.id" class="flex items-start gap-2">
         <span class="w-11 shrink-0 pt-1 text-xs font-mono text-gray-500 dark:text-gray-400">{{ row.label }}</span>
         <div class="grid flex-1 gap-0.5" :style="{ gridTemplateColumns: `repeat(${CELLS_PER_ROW}, minmax(0, 1fr))` }">
           <div v-for="c in row.cells" :key="c.id" class="flex flex-col gap-0.5">

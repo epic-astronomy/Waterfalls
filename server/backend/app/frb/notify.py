@@ -16,11 +16,12 @@ def analysis_url(event_id: int) -> str:
 
 
 def message(event_id: int, s: dict) -> str:
-    t_inf = datetime.fromisoformat(s["t_inf"]).strftime("%Y-%m-%d %H:%M:%S")
+    t_ref = datetime.fromisoformat(s.get("t_ref") or s["t_inf"]).strftime("%Y-%m-%d %H:%M:%S")
+    f_ref = s.get("f_ref_mhz")
     ok = [b for b in s["bands"] if b["status"] == "ok"]
     lines = [
         f"EPIC dispersion search of *{s['source']}* is complete. CHIME DM {s['dm_chime']:.2f} ± {s['dm_err_chime']:.2f} pc cm⁻³, "
-        f"burst at infinite frequency {t_inf} UTC."
+        + (f"burst at {f_ref:.0f} MHz {t_ref} UTC (CHIME, topocentric)." if f_ref else f"burst at infinite frequency {t_ref} UTC.")
     ]
     c, loc = s.get("combined"), s.get("localisation")
     if s["detected"]:

@@ -4,6 +4,7 @@ import type { SpecgmData, SpecgmQuery } from '~/types'
 import * as specUtils from '~/lib/spectrogram'
 import { CHAN_BW_HZ } from '~/lib/ndp'
 import { freqAtMs, utcMs, type FrbParams } from '~/lib/frb'
+const tz = useTimeZone()
 import Plotly from 'plotly.js-dist-min'
 import { v4 as uuidv4 } from "uuid"
 
@@ -91,7 +92,7 @@ var plotlyLayout = computed(() => {
     },
     xaxis: {
       title: {
-        text: 'Time (UTC)',
+        text: `Time (${plotlyAxes.xLabels.length ? tz.zoneName(plotlyAxes.xLabels[0]) : tz.zoneName()})`,
         font: {
           family: 'Courier New, monospace',
           size: 18,
@@ -104,7 +105,7 @@ var plotlyLayout = computed(() => {
       },
       tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
       // keep the axes on the heatmap when the dispersion curve is drawn
-      range: plotlyAxes.xLabels.length ? [plotlyAxes.xLabels[0], plotlyAxes.xLabels[plotlyAxes.xLabels.length - 1]] : undefined
+      range: plotlyAxes.xLabels.length ? [tz.plotTime(plotlyAxes.xLabels[0]), tz.plotTime(plotlyAxes.xLabels[plotlyAxes.xLabels.length - 1])] : undefined
     },
     yaxis: {
       range: plotlyAxes.yLabels.length
@@ -148,7 +149,7 @@ const dispersionTrace = computed(() => {
   }
   if (!pts.length) return null
   return {
-    x: pts.map(d => new Date(d.t).toISOString().slice(0, 23)),
+    x: pts.map(d => tz.plotTime(d.t)),
     y: pts.map(d => d.f),
     type: 'scatter', mode: 'lines',
     line: { dash: 'dash', width: 1.5, color: colorMode.value == 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)' }
@@ -168,7 +169,7 @@ var plotlyConfig = computed(() => {
 
 var plotlyTraces = computed(() => {
   return [{
-    z: plotData.value, type: 'heatmap', x: plotlyAxes.xLabels, y: plotlyAxes.yLabels, hoverongaps: false,
+    z: plotData.value, type: 'heatmap', x: plotlyAxes.xLabels.map(tz.plotTime), y: plotlyAxes.yLabels, hoverongaps: false,
     colorbar: {
       exponentformat: 'e',
       bordercolor: colorMode.value == 'dark' ? 'white' : 'black',
@@ -305,6 +306,7 @@ watch(() => colorMode.value, (n, o) => {
 })
 watch(() => flagChans.value, (n, o) => updatePlot())
 watch(() => showDispersion.value, () => updatePlot())
+watch(tz.mode, () => updatePlot())
 watch(()=>props.specgmQuery.session_id,(n,o)=>{
   if(n!=o){
     console.log('change in session id')

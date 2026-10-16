@@ -9,6 +9,9 @@ const tabIndex = ref(0)
 // FRB sessions pick their windows on the timeline instead of the time inputs
 const isFrb = computed(() => isFrbSource(watchSource.value))
 const frb = computed(() => frbParams(watchSource.value))
+// The window inputs show the chosen time zone; the values stay in UTC
+const tz = useTimeZone()
+const inZone = (r: Ref<string>) => computed({ get: () => tz.toInput(r.value), set: (v: string) => { r.value = tz.fromInput(v) } })
 
 const tabItems = reactive([{
   label: 'Source',
@@ -95,6 +98,10 @@ const selectedSessionEnd=computed(() => {
 const specgmStart=ref('')
 const specgmEnd=ref('')
 const specgmValidMsg = ref('')
+const sessionStartInput = inZone(sessionStart)
+const sessionEndInput = inZone(sessionEnd)
+const specgmStartInput = inZone(specgmStart)
+const specgmEndInput = inZone(specgmEnd)
 // The tabs are the only navigation, so the defaults the Next buttons used to
 // set are set when a source or a session is selected instead.
 // A new source: all its sessions over the whole watch, newest first, on the
@@ -173,7 +180,9 @@ useSeoMeta({
 </script>
 <template>
 
-  <UDashboardNavbar title="Spectrograms - Long Wavelength Array, Sevilleta"></UDashboardNavbar>
+  <UDashboardNavbar title="Spectrograms - Long Wavelength Array, Sevilleta">
+    <template #right><TimeZoneToggle /></template>
+  </UDashboardNavbar>
   <UDashboardPanelContent>
     <!-- <UDashboardCard> -->
     <UTabs :items="tabItems" v-model="tabIndex">
@@ -196,13 +205,13 @@ useSeoMeta({
             <div class="flex flex-wrap justify-evenly items-center">
 
               <div class="flex flex-wrap justify-center items-center gap-2">
-                <span class="text-md">Start time (UTC): </span>
-                <UInput type="datetime-local" v-model="sessionStart" step=1 :min="obsStart" :max="obsEnd"></UInput>
+                <span class="text-md">Start time ({{ tz.zoneName(sessionStart || undefined) }})</span>
+                <UInput type="datetime-local" v-model="sessionStartInput" step=1 :min="tz.toInput(obsStart)" :max="tz.toInput(obsEnd)"></UInput>
               </div>
 
               <div class="flex flex-wrap justify-center items-center gap-2">
-                <span class="text-md">End time (UTC): </span>
-                <UInput type="datetime-local" v-model="sessionEnd" step=1 :min="obsStart" :max="obsEnd"></UInput>
+                <span class="text-md">End time ({{ tz.zoneName(sessionEnd || undefined) }})</span>
+                <UInput type="datetime-local" v-model="sessionEndInput" step=1 :min="tz.toInput(obsStart)" :max="tz.toInput(obsEnd)"></UInput>
               </div>
 
 
@@ -231,13 +240,13 @@ useSeoMeta({
             <div class="flex flex-wrap justify-evenly items-center">
 
               <div class="flex flex-wrap justify-center items-center gap-2  sm:flex-rows-3">
-                <span class="text-md">Start time (UTC): </span>
-                <UInput type="datetime-local" v-model="specgmStart" step=1 :min="selectedSessionStart" :max="selectedSessionEnd"></UInput>
+                <span class="text-md">Start time ({{ tz.zoneName(specgmStart || undefined) }})</span>
+                <UInput type="datetime-local" v-model="specgmStartInput" step=1 :min="tz.toInput(selectedSessionStart)" :max="tz.toInput(selectedSessionEnd)"></UInput>
               </div>
 
               <div class="flex flex-wrap justify-center items-center gap-2">
-                <span class="text-md">End time (UTC): </span>
-                <UInput type="datetime-local" v-model="specgmEnd" step=1 :min="selectedSessionStart" :max="selectedSessionEnd"></UInput>
+                <span class="text-md">End time ({{ tz.zoneName(specgmEnd || undefined) }})</span>
+                <UInput type="datetime-local" v-model="specgmEndInput" step=1 :min="tz.toInput(selectedSessionStart)" :max="tz.toInput(selectedSessionEnd)"></UInput>
               </div>
 
 
