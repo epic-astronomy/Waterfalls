@@ -37,6 +37,28 @@ const nPols = computed(() => props.specgmQuery.n_pols)
 const IMAGE_DT_S = 0.0836
 // kept across windows and sessions, which rebuild this component
 const rfiOn = useState('spectrogram-flag-rfi', () => true)
+
+// Normalise channels: each channel as its departure from its median over the
+// window in units of its robust scatter (1.4826 MAD), from the samples not
+// flagged. The images are not calibrated, so channels sit at the levels of
+// the bandpass; this flattens it so only changes in time stand out, as on
+// the Daily Digest. A median offset rather than a ratio, since channel
+// levels can be near or below zero.
+const normOn = useState('spectrogram-normalise', () => true)
+const normScratch = new Float64Array(8192)
+function normaliseChannel(row: Float32Array) {
+  const v = row.length <= normScratch.length ? normScratch : new Float64Array(row.length)
+  let n = 0
+  for (let t = 0; t < row.length; t++) if (row[t] === row[t]) v[n++] = row[t]
+  if (n < 8) return
+  const sorted = v.subarray(0, n).sort()
+  const med = sorted[n >> 1]
+  for (let j = 0; j < n; j++) sorted[j] = Math.abs(sorted[j] - med)
+  sorted.sort()
+  const sig = 1.4826 * sorted[n >> 1]
+  if (!(sig > 0)) return
+  for (let t = 0; t < row.length; t++) row[t] = (row[t] - med) / sig
+}
 const rfiMasks = ref<Record<string, Uint8Array[]>>({})
 const rfiPending = ref(false)
 let rfiWorker: Worker | null = null
@@ -85,14 +107,32 @@ const plotlyDivId = `plotly-${uuidv4()}`
 const plotlyDiv = ref<HTMLElement>()
 const noData = ref(false)
 var plotlyHTMLElement
+// The plot fills the height left in the window below it (320 to 560 px), with
+// slim margins, so the Visualization tab fits without scrolling
+const PLOT_MIN_PX = 320, PLOT_MAX_PX = 560
+const plotHeight = ref(450)
+function fitPlotHeight() {
+  const el = plotlyDiv.value
+  if (!el || !el.offsetParent) return
+  const scroller = el.closest('.overflow-y-auto')
+  const bottom = scroller ? scroller.getBoundingClientRect().bottom : window.innerHeight
+  const space = bottom - el.getBoundingClientRect().top - 24
+  plotHeight.value = Math.round(Math.max(PLOT_MIN_PX, Math.min(PLOT_MAX_PX, space)))
+}
+const onWindowResize = () => updatePlot()
+onMounted(() => window.addEventListener('resize', onWindowResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
 var plotlyLayout = computed(() => {
   if (!props.specgmQuery) return {}
   return {
+    height: plotHeight.value,
+    margin: { t: 45, b: 55, l: 70, r: 20 },
     title: {
+      y: 0.98, yanchor: 'top',
       text: props.specgmQuery.source_name +' - '+ (startChan.value * CHAN_BW_HZ / 1e6 + nChans.value * chanBwHz.value/2/1e6).toFixed(2) + ' MHz | LWA-Sevilleta',
       font: {
         family: 'Courier New, monospace',
-        size: 24,
+        size: 20,
         color: colorMode.value == 'dark' ? 'white' : 'black'
       }
     },
@@ -274,6 +314,7 @@ function updatePlot() {
   // In a hidden tab the plot has no width and Plotly falls back to 700 px,
   // so wait until the tab is shown; the resize observer draws it then
   if (!plotlyDiv.value || plotlyDiv.value.clientWidth == 0) return
+  fitPlotHeight()
   plotData.value = new Array()
   //copy the data intp plotData
   for (const arr of plotDataRaw) {
@@ -281,6 +322,7 @@ function updatePlot() {
   }
   const rfi = rfiOn.value ? rfiMasks.value[selectedMode.value] : undefined
   if (rfi) plotData.value.forEach((row, c) => { const m = rfi[c]; if (m) for (let t = 0; t < row.length; t++) if (!m[t]) row[t] = NaN })
+  if (normOn.value) plotData.value.forEach(normaliseChannel)
   // plotData=pdata
   // let trace=plotlyTraces.value
   // let trace=[{
@@ -320,6 +362,7 @@ watch(() => colorMode.value, (n, o) => {
   updatePlot()
 })
 watch(() => showDispersion.value, () => updatePlot())
+watch(normOn, () => updatePlot())
 watch(rfiOn, on => { if (on && !rfiMasks.value[selectedMode.value]) requestRfiMask(); else updatePlot() })
 watch(tz.mode, () => updatePlot())
 
@@ -439,6 +482,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="flex items-center gap-x-6">
           <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
+          <UCheckbox v-model="normOn" label="Normalise channels" />
           <div class="flex items-center gap-2">
             <UCheckbox v-model="rfiOn" label="Flag RFI" />
             <!-- always present and only shown or hidden: swapping them in and out with v-if broke Vue's patching here -->
