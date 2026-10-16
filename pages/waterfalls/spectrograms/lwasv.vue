@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type {  ImgSessionItem,  WatchListItem,  SessionQuery,  SpecgmQuery } from '~/types'
+import type {  ImgSessionItem,  ImgSessions,  WatchListItem,  SessionQuery,  SpecgmQuery } from '~/types'
 import { format } from 'date-fns';
 import { frbParams, isFrbSource } from '~/lib/frb'
 import { CHAN_BW_HZ } from '~/lib/ndp'
@@ -153,13 +153,22 @@ const fetchSpecgmDisabled = computed(() => {
   return false
 })
 
+// a window restored from the address, used in place of the first window the
+// FRB timeline picks by itself (or of the default 3 minutes otherwise)
+let pendingWindow: [string, string] | null = null
+function takePendingWindow() { const w = pendingWindow; pendingWindow = null; return w }
+
 function clearSpecgmWindow() {
+  const w = takePendingWindow()
+  if (w) return selectSpecgmWindow(w[0], w[1])
   specgmStart.value = ''
   specgmEnd.value = ''
   specgmQuery.value = undefined
 }
 
 function selectSpecgmWindow(start: string, end: string) {
+  const w = takePendingWindow()
+  if (w) [start, end] = w
   specgmStart.value = start
   specgmEnd.value = end
   fetchSpecgm()
@@ -183,6 +192,55 @@ function fetchSpecgm(){
 
 // The header bar shows the current selection instead of a title (the sidebar
 // names the page); each part opens its tab
+// The selection lives in the address (?source, session, band, from, to,
+// tab), so leaving the page, for the FRB events page say, and coming back,
+// reloading or sharing the link reopens the same source, session and window
+const route = useRoute()
+const router = useRouter()
+let restoring = false
+async function restoreFromAddress() {
+  const q = route.query
+  const id = Number(q.source)
+  if (!id) return
+  restoring = true
+  try {
+    watchSource.value = await $fetch<WatchListItem>(rtConfig.public.fastapiBase + `/watchlist/source/${id}`)
+    await nextTick()
+    if (q.session && q.band != null) {
+      const found = await $fetch<ImgSessions>(rtConfig.public.fastapiBase + '/imaging/sessions/', {
+        query: { page: 1, nrows: 1, start_time: obsStart.value + 'Z', end_time: obsEnd.value + 'Z',
+          source_name: watchSource.value.source, session_id: String(q.session), chan0: Number(q.band) }
+      })
+      if (found.data?.[0]) {
+        if (q.from && q.to) pendingWindow = [String(q.from), String(q.to)]
+        imgSession.value = found.data[0]
+        await nextTick()
+        // without the FRB timeline nothing picks a window, so apply it here
+        if (pendingWindow && !isFrb.value) selectSpecgmWindow(...pendingWindow)
+      }
+    }
+    if (q.tab != null) tabIndex.value = Math.max(0, Math.min(2, Number(q.tab) || 0))
+  } catch {
+    // a stale or broken address: start from the watch list
+  } finally {
+    await nextTick()
+    restoring = false
+  }
+}
+onMounted(restoreFromAddress)
+
+watch([watchSource, imgSession, specgmQuery, tabIndex], () => {
+  if (restoring) return
+  const q: Record<string, string> = {}
+  if (watchSource.value) {
+    q.source = String(watchSource.value.id)
+    if (imgSession.value) { q.session = String(imgSession.value.session_id); q.band = String(imgSession.value.chan0) }
+    if (specgmQuery.value) { q.from = String(specgmQuery.value.start_time); q.to = String(specgmQuery.value.end_time) }
+    q.tab = String(tabIndex.value)
+  }
+  router.replace({ query: q })
+})
+
 const crumbs = computed(() => {
   const out: { label: string, tab: number }[] = []
   if (!watchSource.value) return out
@@ -227,7 +285,7 @@ useSeoMeta({
         </div>
       </template>
       <template #srcSelection>
-        <SpectrogramWatchList v-model="watchSource" :day="listDay" class="mt-2">
+        <SpectrogramWatchList v-model="watchSource" :day="listDay" class="mt-2" @picked="tabIndex = 1">
           <template #toolbar>
             <SpectrogramDayPicker v-model="listDay" :marks="frbDays" class="ml-2" @range="(a, b) => markRange = [a, b]">
               <template #legend>
@@ -240,7 +298,7 @@ useSeoMeta({
 
       <template #sessionSelection>
         <div v-if="watchSource" class="mt-2">
-          <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession" :frb="isFrb ? frb : null"
+          <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession" @picked="tabIndex = 2" :frb="isFrb ? frb : null"
             :watch-window="isFrb ? watchWindow : null">
             <!-- FRB watches last hours, so their sessions are always listed in full -->
             <template v-if="!isFrb" #toolbar>

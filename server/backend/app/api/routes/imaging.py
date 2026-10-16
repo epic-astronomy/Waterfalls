@@ -68,11 +68,18 @@ async def get_imaging_sessions(
     sort: str | None = None,
     order: Literal["asc", "desc"] = "asc",
     burst_only: bool = False,
+    session_id: str | None = None,
+    chan0: int | None = None,
 ):
     """Imaging sessions of a source within a period. With `burst_only`, for a
     CHIME/FRB source, only the sessions during which the burst crosses their
     band, allowing for the DM error."""
     burst_cond = burst_condition(session, obs_period.source_name) if burst_only else true()
+    # one session and band, for restoring a page from its address
+    if session_id is not None:
+        burst_cond = and_(burst_cond, epic_img_metadata.session_id == session_id)
+    if chan0 is not None:
+        burst_cond = and_(burst_cond, epic_img_metadata.chan0 == chan0)
     sortable = {
         "start_time": epic_img_metadata.session_start,
         "end_time": epic_img_metadata.session_end,

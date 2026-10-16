@@ -58,7 +58,10 @@ const selectedColumns = ref(columns.slice(0, 6))
 const columnsTable = computed(() => columns.filter((column) => selectedColumns.value.includes(column)))
 const selectedRow: Ref<WatchListItem[] | undefined> = ref([])
 
+// every click, even on the row already selected, so the page can move on
+const emit = defineEmits<{ picked: [row: WatchListItem] }>()
 function rowSelect(row: WatchListItem) {
+  emit('picked', row)
   if (selectedRow.value) {
     selectedRow.value.length = 0
     selectedRow.value.push(row)

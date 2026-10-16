@@ -99,13 +99,38 @@ const columnsTable = computed(() => {
 })
 const selectedRow: Ref<ImgSessionItem[] | undefined> = ref([])
 
+// every click, even on the row already selected, so the page can move on
+const emit = defineEmits<{ picked: [row: ImgSessionItem] }>()
 function rowSelect(row: ImgSessionItem) {
+  emit('picked', row)
   if (selectedRow.value) {
     selectedRow.value.length = 0
     selectedRow.value.push(row)
     selectedSession.value = row
   }
 }
+
+// Rows share the height left in the window, so a page of rows fills it
+// without scrolling; never below the compact height of 37 px
+const ROW_MIN_PX = 37, ROW_MAX_PX = 80
+const tableBox = ref<HTMLElement>()
+const footerBox = ref<HTMLElement>()
+const rowPx = ref(ROW_MIN_PX)
+function fitRows() {
+  const el = tableBox.value
+  if (!el || !el.offsetParent) return
+  const body = el.querySelector('tbody')
+  if (!body) return
+  const scroller = el.closest('.overflow-y-auto')
+  const viewBottom = scroller ? scroller.getBoundingClientRect().bottom : window.innerHeight
+  const footer = (footerBox.value?.offsetHeight ?? 40) + 32 // the card footer and its padding
+  const space = viewBottom - body.getBoundingClientRect().top - footer - 24 + (scroller?.scrollTop ?? 0)
+  rowPx.value = Math.max(ROW_MIN_PX, Math.min(ROW_MAX_PX, Math.floor(space / rowsPerPage.value)))
+}
+const fitObserver = import.meta.client ? new ResizeObserver(() => fitRows()) : null
+watch(tableBox, (el, old) => { if (old) fitObserver?.unobserve(old); if (el) fitObserver?.observe(el) })
+onMounted(() => window.addEventListener('resize', fitRows))
+onBeforeUnmount(() => { window.removeEventListener('resize', fitRows); fitObserver?.disconnect() })
 
 const page = ref(1)
 const rowsPerPage = ref(10)
@@ -147,6 +172,8 @@ watch(()=>error, (newError,_) => {
   }
 })
 
+watch([() => imgSession.value.data, rowsPerPage], () => nextTick(fitRows))
+
 const tableData = computed(() => {
   return imgSession.value.data ? imgSession.value.data : []
 })
@@ -177,11 +204,13 @@ const tableData = computed(() => {
         </UButton>
       </USelectMenu>
     </div>
+    <div ref="tableBox">
     <UTable :rows="tableData" :loading="pending"
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
       v-model="selectedRow" v-model:sort="sort" sort-mode="manual"
-      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center', padding: 'px-4 py-3' }, td: { base: 'whitespace-nowrap text-center', padding: 'px-4 py-2' } }"
+      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center', padding: 'px-4 py-3' }, td: { base: 'whitespace-nowrap text-center', padding: 'px-4 py-2' }, tr: { base: 'h-[var(--row-h)]' } }"
+      :style="{ '--row-h': `${rowPx}px` }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
 
       <template #coverage-data="{ row }">
@@ -226,9 +255,10 @@ const tableData = computed(() => {
         {{humanizeDuration(new Date(row.end_time).getTime() - new Date(row.start_time).getTime(), { round: true })}}
       </template>
     </UTable>
+    </div>
 
     <template #footer>
-      <div class="flex justify-between flex-wrap items-center">
+      <div ref="footerBox" class="flex justify-between flex-wrap items-center">
         <div>
           <span class="text-sm leading-5">
             Showing

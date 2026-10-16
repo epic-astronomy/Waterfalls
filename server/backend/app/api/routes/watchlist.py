@@ -142,6 +142,18 @@ async def get_all_sources(
     return WatchListPage(data=data, count=count)
 
 
+@router.get("/source/{source_id}", response_model=WatchListRow)
+async def get_watch_source(source_id: int, session: SessionDep, current_user: UserDep):
+    """One entry of the watch list, for restoring a page from its address"""
+    row = session.exec(
+        select(epic_watchdog, CATEGORY.label("category"), ORIGIN.label("origin")).where(epic_watchdog.id == source_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No watch-list entry has this id")
+    w, c, o = row
+    return WatchListRow(**w.model_dump(), category=c, origin=o)
+
+
 class WatchEvent(BaseModel):
     time: datetime
     category: str
