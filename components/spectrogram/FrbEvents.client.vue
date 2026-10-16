@@ -324,7 +324,7 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
         <span class="text-sm text-gray-500 dark:text-gray-400">
           DM {{ product.dm.toFixed(2) }} ± {{ product.dm_err.toFixed(2) }} pc cm⁻³ ·
           burst at {{ product.f_ref_mhz }} MHz {{ timeText(product.t_ref) }} (CHIME, topocentric) ·
-          watched until {{ timeText(product.t_end) }}
+          observed until {{ timeText(product.t_end) }}
         </span>
       </div>
       <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
