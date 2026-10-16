@@ -143,21 +143,19 @@ const pageTo = computed(() => Math.min(page.value * rowsPerPage.value, pageTotal
 // sort by a column; without one the newest sessions come first
 const sort = ref<{ column: string, direction: 'asc' | 'desc' }>({ column: '', direction: 'asc' })
 
+const listQuery = (pg: number) => ({
+  page: pg,
+  nrows: rowsPerPage.value,
+  start_time: props.sessionQuery?.tStart,
+  end_time: props.sessionQuery?.tEnd,
+  source_name: props.sessionQuery?.sourceName,
+  sort: sort.value.column || undefined,
+  order: sort.value.direction,
+  burst_only: props.frb && burstOnly.value ? true : undefined
+})
 const { pending, data: imgSession, error: error } = await useLazyAsyncData<ImgSessions>(
   'sessionlist',
-  () => $fetch(rtConfig.public.fastapiBase + '/imaging/sessions/',
-    {
-      query: {
-        page: page.value,
-        nrows: rowsPerPage.value,
-        start_time: props.sessionQuery?.tStart,
-        end_time: props.sessionQuery?.tEnd,
-        source_name: props.sessionQuery?.sourceName,
-        sort: sort.value.column || undefined,
-        order: sort.value.direction,
-        burst_only: props.frb && burstOnly.value ? true : undefined
-      }
-    }), {
+  () => $fetch(rtConfig.public.fastapiBase + '/imaging/sessions/', { query: listQuery(page.value) }), {
   watch: [() => page.value, () => props.sessionQuery, rowsPerPage, sort, burstOnly],
   default: () => defaultImsSession
 })
@@ -173,6 +171,26 @@ watch(()=>error, (newError,_) => {
 })
 
 watch([() => imgSession.value.data, rowsPerPage], () => nextTick(fitRows))
+
+// The table shows the selected session as selected however it was chosen,
+// including from the page's address, and turns to its page if needed
+const isSelected = (r: ImgSessionItem, sel?: ImgSessionItem) => !!sel && r.session_id == sel.session_id && r.chan0 == sel.chan0
+watch([selectedSession, () => imgSession.value.data], () => {
+  const row = (imgSession.value.data ?? []).find((r: ImgSessionItem) => isSelected(r, selectedSession.value))
+  selectedRow.value = row ? [row] : []
+}, { immediate: true })
+let seeking = false
+watch([selectedSession, () => imgSession.value.data, pending], async ([sel]) => {
+  if (!sel || !props.sessionQuery || seeking || pending.value || (imgSession.value.data ?? []).some((r: ImgSessionItem) => isSelected(r, sel))) return
+  seeking = true
+  try {
+    for (let pg = 1; pg <= 20; pg++) {
+      const r = await $fetch<ImgSessions>(rtConfig.public.fastapiBase + '/imaging/sessions/', { query: listQuery(pg) })
+      if (r.data.some((x: ImgSessionItem) => isSelected(x, sel))) { if (page.value != pg) page.value = pg; break }
+      if (pg * rowsPerPage.value >= r.count) break
+    }
+  } finally { seeking = false }
+})
 
 const tableData = computed(() => {
   return imgSession.value.data ? imgSession.value.data : []
@@ -209,7 +227,7 @@ const tableData = computed(() => {
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
       v-model="selectedRow" v-model:sort="sort" sort-mode="manual"
-      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center', padding: 'px-4 py-3' }, td: { base: 'whitespace-nowrap text-center', padding: 'px-4 py-2' }, tr: { base: 'h-[var(--row-h)]' } }"
+      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center', padding: 'px-4 py-3' }, td: { base: 'whitespace-nowrap text-center', padding: 'px-4 py-2' }, tr: { base: 'h-[var(--row-h)]', selected: 'bg-primary-50 dark:bg-primary-400/15' } }"
       :style="{ '--row-h': `${rowPx}px` }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
 

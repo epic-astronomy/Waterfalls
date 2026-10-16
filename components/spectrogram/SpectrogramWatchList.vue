@@ -101,19 +101,18 @@ const category = ref('all')
 const sort = ref<{ column: string, direction: 'asc' | 'desc' }>({ column: '', direction: 'asc' })
 const categoryLabels: Record<string, string> = { frb: 'FRB', pulsar: 'Pulsar', solar_system: 'Solar system', other: 'Other' }
 
+const listQuery = (pg: number) => ({
+  page: pg,
+  nrows: rowsPerPage.value,
+  category: category.value,
+  sort: sort.value.column || undefined,
+  order: sort.value.direction,
+  active_from: dayRange.value ? dayRange.value[0] + 'Z' : undefined,
+  active_to: dayRange.value ? dayRange.value[1] + 'Z' : undefined
+})
 const { pending, data: watchlist, error: error } = await useLazyAsyncData<WatchList>(
   'watchlist',
-  () => $fetch(rtConfig.public.fastapiBase + '/watchlist/all/', {
-    query: {
-      page: page.value,
-      nrows: rowsPerPage.value,
-      category: category.value,
-      sort: sort.value.column || undefined,
-      order: sort.value.direction,
-      active_from: dayRange.value ? dayRange.value[0] + 'Z' : undefined,
-      active_to: dayRange.value ? dayRange.value[1] + 'Z' : undefined
-    }
-  }), {
+  () => $fetch(rtConfig.public.fastapiBase + '/watchlist/all/', { query: listQuery(page.value) }), {
   watch: [page, rowsPerPage, category, sort, dayRange],
   default: () => defaultWatchList
 })
@@ -124,6 +123,26 @@ watch(error, (newError) => {
   if (newError) {
     toast.add({ title: 'Error fetching the watchlist', color: 'red', icon: 'i-heroicons-exclamation-circle' })
   }
+})
+
+// The table shows the selected source as selected however it was chosen,
+// including from the page's address, and turns to its page if needed
+watch([watchSource, () => watchlist.value.data], () => {
+  const sel = watchSource.value
+  const row = sel && (watchlist.value.data ?? []).find((r: WatchListItem) => r.id == sel.id)
+  selectedRow.value = row ? [row] : []
+}, { immediate: true })
+let seeking = false
+watch([watchSource, () => watchlist.value.data, pending], async ([sel]) => {
+  if (!sel || seeking || pending.value || (watchlist.value.data ?? []).some((r: WatchListItem) => r.id == sel.id)) return
+  seeking = true
+  try {
+    for (let pg = 1; pg <= 20; pg++) {
+      const r = await $fetch<WatchList>(rtConfig.public.fastapiBase + '/watchlist/all/', { query: listQuery(pg) })
+      if (r.data.some((x: WatchListItem) => x.id == sel.id)) { if (page.value != pg) page.value = pg; break }
+      if (pg * rowsPerPage.value >= r.count) break
+    }
+  } finally { seeking = false }
 })
 
 const tableData = computed(() => {
@@ -166,7 +185,7 @@ const tableData = computed(() => {
     <UTable :rows="tableData" :loading="pending"
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
-      v-model="selectedRow" v-model:sort="sort" sort-mode="manual" :ui="{ checkbox: { padding: 'hidden' } }">
+      v-model="selectedRow" v-model:sort="sort" sort-mode="manual" :ui="{ checkbox: { padding: 'hidden' }, tr: { selected: 'bg-primary-50 dark:bg-primary-400/15' } }">
 
       <template #origin-data="{ row }">
         <UBadge variant="soft" size="xs" :color="row.origin == 'chime' ? 'blue' : 'gray'"
