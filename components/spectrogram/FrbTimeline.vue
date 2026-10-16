@@ -136,6 +136,47 @@ const rows = computed(() => {
 
 const sessionCells = computed(() => rows.value.flatMap(r => r.cells).filter(c => c.inSession))
 
+// Long sessions are collapsed to the hours that matter: the hours the burst
+// crosses this band, with one hour either side, stay expanded (or the first
+// hour when the burst misses the band during the session). Every other run
+// of hours becomes one thin strip with its digest Stokes I in miniature,
+// which expands when clicked or when the arrow keys step into it.
+const opened = ref(new Set<number>())
+watch(() => props.imgSession.session_id, () => { opened.value = new Set() })
+const autoOpen = computed(() => {
+  const rs = rows.value
+  const burstRows = rs.map((r, i) => r.cells.some(c => c.inSession && c.inBurst) ? i : -1).filter(i => i >= 0)
+  const keep = new Set<number>()
+  if (burstRows.length) burstRows.forEach(i => [i - 1, i, i + 1].forEach(j => { if (rs[j]) keep.add(rs[j].id) }))
+  else if (rs.length) keep.add(rs[0].id)
+  return keep
+})
+const blocks = computed(() => {
+  const out: ({ kind: 'row', row: (typeof rows.value)[number] } | { kind: 'strip', id: number, label: string, rows: (typeof rows.value) })[] = []
+  for (const row of rows.value) {
+    if (autoOpen.value.has(row.id) || opened.value.has(row.id)) { out.push({ kind: 'row', row }); continue }
+    const last = out[out.length - 1]
+    if (last?.kind == 'strip') last.rows.push(row)
+    else out.push({ kind: 'strip', id: row.id, label: '', rows: [row] })
+  }
+  // a strip spans the session within its hours, not the whole hours
+  for (const b of out) if (b.kind == 'strip') {
+    const t0 = Math.max(b.rows[0].id, session.value.start)
+    const t1 = Math.min(b.rows[b.rows.length - 1].id + ROW_S * 1e3, session.value.end)
+    const min = Math.round((t1 - t0) / 60e3)
+    const span = min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`
+    b.label = `${hhmmss(t0).slice(0, 5)} to ${hhmmss(t1).slice(0, 5)}, ${span}, no burst in this band`
+  }
+  return out
+})
+const expand = (rs: { id: number }[]) => { opened.value = new Set([...opened.value, ...rs.map(r => r.id)]) }
+// the arrow keys can step into a collapsed hour; open it
+watch(shown, sh => {
+  if (!sh) return
+  const row = rows.value.find(r => r.cells.some(c => c.isShown))
+  if (row && !autoOpen.value.has(row.id) && !opened.value.has(row.id)) expand([row])
+})
+
 const select = (c: { t0: number, t1: number }) => emit('select', isoUtc(c.t0), isoUtc(c.t1))
 
 // Open each session on the first cell the burst reaches. When it never
@@ -209,12 +250,28 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
           </span>
         </div>
       </div>
-      <div v-for="row in rows" :key="row.id" class="flex items-start gap-2">
-        <span class="w-11 shrink-0 pt-1 text-xs font-mono text-gray-500 dark:text-gray-400">{{ row.label }}</span>
+      <template v-for="b in blocks" :key="b.kind == 'row' ? b.row.id : `s${b.id}`">
+      <button v-if="b.kind == 'strip'" type="button" class="flex w-full items-center gap-2 group" :aria-label="`Expand ${b.label}`"
+        @click="expand(b.rows)">
+        <span class="w-11 shrink-0 text-xs font-mono text-gray-500 dark:text-gray-400 text-left">{{ b.rows[0].label }}</span>
+        <span class="relative flex-1 h-5 rounded-sm bg-gray-100 dark:bg-gray-800 group-hover:bg-gray-200 dark:group-hover:bg-gray-700 overflow-hidden">
+          <span class="absolute inset-x-0 bottom-0 h-full flex items-end gap-px px-px" aria-hidden="true">
+            <span v-for="c in b.rows.flatMap(r => r.cells)" :key="c.id" class="flex-1 rounded-[1px] bg-primary-500/50"
+              :class="c.inSession ? '' : 'invisible'" :style="{ height: c.level !== null ? `max(1px, ${c.level * 60}%)` : '0' }" />
+          </span>
+          <span class="relative flex h-full items-center justify-center">
+            <span class="flex items-center gap-1 rounded px-2 text-[11px] leading-4 bg-white/90 text-gray-700 dark:bg-gray-900/90 dark:text-gray-200 ring-1 ring-gray-200 dark:ring-gray-700">
+              <UIcon name="i-heroicons-chevron-down-20-solid" class="w-3.5 h-3.5" />{{ b.label }}
+            </span>
+          </span>
+        </span>
+      </button>
+      <div v-else class="flex items-start gap-2">
+        <span class="w-11 shrink-0 pt-1 text-xs font-mono text-gray-500 dark:text-gray-400">{{ b.row.label }}</span>
         <div class="grid flex-1 gap-0.5" :style="{ gridTemplateColumns: `repeat(${CELLS_PER_ROW}, minmax(0, 1fr))` }">
-          <div v-for="c in row.cells" :key="c.id" class="flex flex-col gap-0.5">
+          <div v-for="c in b.row.cells" :key="c.id" class="flex flex-col gap-0.5">
             <button type="button" class="relative h-7 rounded-sm overflow-hidden transition-colors"
-              :class="cellClass(c)" :disabled="!c.inSession" :title="cellTitle(c)"
+              :class="cellClass(c)" :disabled="!c.inSession"
               :aria-label="`Show ${cellTitle(c)}`" @click="select(c)">
               <svg v-if="c.sub" class="absolute inset-0 w-full h-full" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
                 <line :x1="c.sub.x1" :y1="c.sub.y1" :x2="c.sub.x2" :y2="c.sub.y2" vector-effect="non-scaling-stroke"
@@ -230,6 +287,7 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
           </div>
         </div>
       </div>
+      </template>
     </div>
     <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ burstNote }}</p>
   </UCard>
