@@ -166,8 +166,8 @@ const tableData = computed(() => {
       </template>
 
       <template #watch_status-data="{ row }">
-        <UBadge variant="soft" :label="row.watch_status == 'watching' ? 'Active' : 'Completed'"
-          :color="row.watch_status == 'watching' ? 'primary' : 'orange'" size="xs"></UBadge>
+        <UBadge variant="soft" :label="row.watch_status == 'watching' ? 'Active' : row.origin == 'chime' ? 'Completed' : 'Inactive'"
+          :color="row.watch_status == 'watching' ? 'primary' : row.origin == 'chime' ? 'orange' : 'gray'" size="xs"></UBadge>
       </template>
 
       <template #t_start-data="{row}">

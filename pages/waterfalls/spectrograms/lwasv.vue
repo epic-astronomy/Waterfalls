@@ -2,6 +2,7 @@
 import type {  ImgSessionItem,  WatchListItem,  SessionQuery,  SpecgmQuery } from '~/types'
 import { format } from 'date-fns';
 import { frbParams, isFrbSource } from '~/lib/frb'
+import { CHAN_BW_HZ } from '~/lib/ndp'
 const watchSource = ref<WatchListItem>()
 const imgSession = ref<ImgSessionItem>()
 const specgmQuery = ref<SpecgmQuery>()
@@ -177,6 +178,19 @@ function fetchSpecgm(){
   }
 }
 
+// The header bar shows the current selection instead of a title (the sidebar
+// names the page); each part opens its tab
+const crumbs = computed(() => {
+  const out: { label: string, tab: number }[] = []
+  if (!watchSource.value) return out
+  out.push({ label: watchSource.value.source, tab: 0 })
+  const s = imgSession.value
+  if (s) out.push({ label: `${(s.chan0 * CHAN_BW_HZ / 1e6).toFixed(2)} MHz, ${tz.dateTime(s.start_time)} ${tz.zoneName(s.start_time)}`, tab: 1 })
+  const q = specgmQuery.value
+  if (s && q) out.push({ label: `${tz.clock(String(q.start_time))} to ${tz.clock(String(q.end_time))}`, tab: 2 })
+  return out
+})
+
 useSeoMeta({
   title: 'Spectrograms @ LWA-Sevilleta',
   ogTitle:  'Spectrograms @ LWA-Sevilleta',
@@ -186,9 +200,17 @@ useSeoMeta({
 </script>
 <template>
 
-  <UDashboardNavbar title="Spectrograms - Long Wavelength Array, Sevilleta">
+  <PageToolbar>
+      <nav v-if="crumbs.length" aria-label="Current selection" class="flex flex-wrap items-center gap-1 min-w-0 text-sm">
+        <template v-for="(c, i) in crumbs" :key="i">
+          <UIcon v-if="i" name="i-heroicons-chevron-right-20-solid" class="w-4 h-4 text-gray-400 shrink-0" />
+          <UButton size="xs" :color="i == crumbs.length - 1 ? 'primary' : 'gray'" variant="ghost" :label="c.label"
+            class="truncate" @click="tabIndex = c.tab" />
+        </template>
+      </nav>
+      <span v-else class="text-sm text-gray-500 dark:text-gray-400">Select a source to begin</span>
     <template #right><TimeZoneToggle /></template>
-  </UDashboardNavbar>
+  </PageToolbar>
   <UDashboardPanelContent>
     <!-- <UDashboardCard> -->
     <UTabs :items="tabItems" v-model="tabIndex">

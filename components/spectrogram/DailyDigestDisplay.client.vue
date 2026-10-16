@@ -503,9 +503,8 @@ onBeforeUnmount(() => {
 
 </script>
 <template>
-  <!-- the page's controls sit in the header bar; the sidebar names the page -->
-  <UDashboardNavbar :ui="{ wrapper: 'h-auto min-h-[--header-height] py-2 relative', left: 'flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0' }">
-    <template #left>
+  <!-- the page's controls sit in the header bar -->
+  <PageToolbar>
       <UProgress v-if="pending || pending2" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
 
 
@@ -534,8 +533,7 @@ onBeforeUnmount(() => {
           <UButton v-if="stretchPos != STRETCH_DEFAULT" size="2xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
             aria-label="Reset the colour exponent" @click="stretchPos = STRETCH_DEFAULT" />
         </div>
-    </template>
-  </UDashboardNavbar>
+  </PageToolbar>
   <UDashboardPanelContent>
     <!-- always in the page, so the resize observer can watch it -->
     <UCard v-show="bandKeys.length" :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">

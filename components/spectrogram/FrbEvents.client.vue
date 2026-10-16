@@ -271,9 +271,15 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
 </script>
 
 <template>
-  <UDashboardNavbar title="FRB events - Long Wavelength Array, Sevilleta">
+  <!-- the selected event instead of a title -->
+  <PageToolbar>
+      <span v-if="product" class="text-sm truncate">
+        <span class="font-semibold">{{ product.source }}</span>
+        <span class="text-gray-500 dark:text-gray-400"> · DM {{ product.dm.toFixed(1) }} pc cm⁻³ · burst at {{ product.f_ref_mhz }} MHz {{ timeText(product.t_ref) }}</span>
+      </span>
+      <span v-else class="text-sm text-gray-500 dark:text-gray-400">Select an event to see its analysis</span>
     <template #right><TimeZoneToggle /></template>
-  </UDashboardNavbar>
+  </PageToolbar>
   <UDashboardPanelContent>
     <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }" class="relative">
       <UProgress v-if="eventsPending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
