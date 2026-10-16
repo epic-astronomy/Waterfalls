@@ -193,9 +193,29 @@ function drawMap() {
   if (!el || !el.clientWidth || !c?.mapRows || !s) return
   const traces: any[] = [mapTrace(c)]
   if (c.peak_snr != null) {
-    traces.push({ type: 'scatter', mode: 'markers', x: [c.peak_tau], y: [c.peak_dm],
-      marker: { symbol: 'circle-open', size: 14, color: '#f59e0b', line: { width: 2 } } })
+    // a detection is marked boldly; below the threshold the peak is only the
+    // highest point in the search window, which noise always provides
+    const detected = c.peak_snr >= s.snr_threshold
+    traces.push({ type: 'scatter', mode: 'markers+text', x: [c.peak_tau], y: [c.peak_dm],
+      text: [detected ? `detection, S/N ${c.peak_snr.toFixed(1)}` : `highest in search window, S/N ${c.peak_snr.toFixed(1)}`],
+      textposition: 'top right', textfont: { color: detected ? '#f59e0b' : muted.value, size: 11 },
+      marker: detected ? { symbol: 'circle-open', size: 16, color: '#f59e0b', line: { width: 3 } }
+        : { symbol: 'circle-open', size: 12, color: muted.value, line: { width: 1 }, opacity: 0.8 } })
   }
+  // The highest point anywhere in the map, to compare with the peak in the
+  // search window: a window placed on the CHIME values always has a peak
+  // there, and it means little if the map has higher points elsewhere
+  const tr = mapTrace(c)
+  let best = { v: -Infinity, x: 0, y: 0 }
+  c.mapRows.forEach((row, i) => row.forEach((v, j) => { if (v > best.v) best = { v, x: tr.x[j], y: tr.y[i] } }))
+  if (isFinite(best.v)) {
+    traces.push({ type: 'scatter', mode: 'markers+text', x: [best.x], y: [best.y],
+      text: [`highest in the map, S/N ${best.v.toFixed(1)}`], textposition: 'bottom right', textfont: { color: ink.value, size: 11 },
+      marker: { symbol: 'diamond-open', size: 13, color: ink.value, line: { width: 2 } } })
+  }
+  // where CHIME measured the burst: its DM, at its arrival time
+  traces.push({ type: 'scatter', mode: 'markers+text', x: [0], y: [s.dm_chime], text: ['CHIME'], textposition: 'top left',
+    textfont: { color: '#38bdf8', size: 11 }, marker: { symbol: 'x-thin-open', size: 14, color: '#38bdf8', line: { color: '#38bdf8', width: 2 } } })
   Plotly.react(el, traces, {
     height: 360, margin: { l: 70, r: 10, t: 10, b: 45 }, paper_bgcolor: paper.value, plot_bgcolor: paper.value, font: font.value,
     hovermode: false, showlegend: false, coloraxis: colorAxis.value,
@@ -280,7 +300,8 @@ onBeforeUnmount(() => observer?.disconnect())
           <div class="px-2 text-xs text-gray-500 dark:text-gray-400">Select a pixel to show its transforms</div>
           <div ref="gridDiv" class="w-full" />
         </UCard>
-        <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="lg:col-span-2">
+        <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="lg:col-span-2 relative transition-opacity" :class="pending ? 'opacity-50' : ''">
+          <UProgress v-if="pending" animation="carousel" size="xs" class="absolute top-0 left-0" />
           <div class="px-2 pt-1 text-sm font-medium">
             S/N against trial DM, pixel ({{ pixel.px }}, {{ pixel.py }})
           </div>
@@ -288,15 +309,18 @@ onBeforeUnmount(() => observer?.disconnect())
           <div ref="curveDiv" class="w-full" />
         </UCard>
       </div>
-      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="relative transition-opacity" :class="pending ? 'opacity-50' : ''">
+        <UProgress v-if="pending" animation="carousel" size="xs" class="absolute top-0 left-0" />
         <div class="px-2 pt-1 text-sm font-medium">
           DM against arrival time, all bands combined, pixel ({{ pixel.px }}, {{ pixel.py }})
         </div>
         <div class="px-2 text-xs text-gray-500 dark:text-gray-400">The transforms of the bands with data, aligned on the arrival at 400 MHz and
-          stacked as the sum of their S/N over the square root of their number. Dashed lines bound the search window, the circle marks the peak</div>
+          stacked as the sum of their S/N over the square root of their number. Dashed lines bound the search window. The circle marks the highest point in the search window, the diamond the
+          highest point anywhere in the map, and the blue cross the DM and arrival time CHIME measured</div>
         <div ref="mapDiv" class="w-full" />
       </UCard>
-      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="relative transition-opacity" :class="pending ? 'opacity-50' : ''">
+        <UProgress v-if="pending" animation="carousel" size="xs" class="absolute top-0 left-0" />
         <div class="px-2 pt-1 text-sm font-medium">DM against arrival time in each band, pixel ({{ pixel.px }}, {{ pixel.py }})</div>
         <div ref="bandMapDiv" class="w-full" />
       </UCard>

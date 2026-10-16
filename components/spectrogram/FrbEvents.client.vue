@@ -79,11 +79,25 @@ const tabItems = [
   { label: 'Analysis', icon: 'i-material-symbols-key-visualizer', slot: 'analysis' }
 ]
 const tabIndex = ref(route.query.tab != null ? (Number(route.query.tab) ? 1 : 0) : (selectedId.value ? 1 : 0))
+// The address is the single source of truth for the selected event and tab.
+// Opening an event pushes a history entry, so the browser's Back button
+// returns to the list; switching tabs only replaces the address. (Pushing
+// and then replacing from a watcher made the router cancel the push.)
 function pickEvent(row: FrbEventItem) {
-  selectedId.value = row.id
-  tabIndex.value = 1 // also when the same event is clicked again
+  // events with no data have nothing to analyse
+  if (row.computed_at && !row.n_bands) return
+  router.push({ query: { ...route.query, event: String(row.id), tab: '1' } })
 }
-watch([selectedId, tabIndex], ([id, tab]) => router.replace({ query: { ...route.query, event: id ?? undefined, tab: String(tab) } }))
+watch(tabIndex, (tab) => {
+  if (String(tab) != route.query.tab) router.replace({ query: { ...route.query, tab: String(tab) } })
+})
+// Back, Forward and pushes change the address; follow it
+watch(() => route.query, (q) => {
+  const id = Number(q.event) || null
+  const tab = q.tab != null ? (Number(q.tab) ? 1 : 0) : (id ? 1 : 0)
+  if (id != selectedId.value) selectedId.value = id
+  if (tab != tabIndex.value) tabIndex.value = tab
+})
 
 const { data: product, pending: productPending } = await useLazyAsyncData<FrbEventProducts | null>(
   'frb-event',
@@ -96,7 +110,8 @@ const eventRows = computed(() => (events.value?.data ?? []).map(e => ({
   dm_text: e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '',
   snr_text: e.max_snr != null ? e.max_snr.toFixed(1) : '',
   products: e.computed_at ? (e.n_bands ? `${e.n_bands} band${e.n_bands == 1 ? '' : 's'}` : 'No data') : (e.watch_status == 'watching' ? 'Active' : 'Pending'),
-  class: e.id == selectedId.value ? 'bg-primary-50 dark:bg-primary-900/30' : ''
+  class: e.id == selectedId.value ? 'bg-primary-50 dark:bg-primary-900/30'
+    : (e.computed_at && !e.n_bands ? 'opacity-60 cursor-default' : '')
 })))
 const eventColumns = computed(() => [
   { key: 'source', label: 'Event', sortable: true },
@@ -359,6 +374,11 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
          panel Vue inserted the DM transform ahead of the others; a fixed CSS
          order keeps them in reading order whatever the DOM order -->
     <div class="flex flex-col">
+    <!-- while an event loads, including on switching to this tab -->
+    <UCard v-if="selectedId && productPending" class="relative mt-2 order-first" :ui="{ body: { padding: 'px-4 py-6' } }">
+      <UProgress animation="carousel" size="xs" class="absolute top-0 left-0" />
+      <p class="text-center text-sm text-gray-500 dark:text-gray-400">Loading the analysis</p>
+    </UCard>
     <UCard v-if="!selectedId" :ui="{ body: { padding: 'px-4 py-10' } }" class="mt-2 order-1">
       <div class="flex flex-col items-center gap-2 text-center text-gray-500 dark:text-gray-400">
         <UIcon name="i-heroicons-cursor-arrow-rays" class="w-8 h-8" />

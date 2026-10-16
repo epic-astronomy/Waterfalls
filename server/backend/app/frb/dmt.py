@@ -42,7 +42,7 @@ from app.frb.products import CHIME_REF_MHZ, FETCH_CHUNK_S, K_DM, N_POL, _robust,
 
 log = logging.getLogger(__name__)
 
-VERSION = 5
+VERSION = 6
 DM_STEP = 0.05
 TAU_HALF = 60.0  # shortest span of arrival offsets searched and stored, s
 MAX_TAU_HALF = 900.0
@@ -257,10 +257,12 @@ def combine(bands: list[dict], x_grid: np.ndarray, dm_lo: float) -> dict:
     ok = [b for b in bands if b["status"] == "ok"]
     if not ok:
         return {}
-    # the span of the longest band window, sampled as finely as the finest
-    # band; the smoother low-band maps are interpolated onto it
+    # the span every band covers, sampled as finely as the finest band; the
+    # smoother low-band maps are interpolated onto it. Over a longer span the
+    # number of bands stacked changed along the time axis (5 within +-60 s,
+    # 2 to +-146 s, 1 beyond for event 302) and the map jumped at each step
     dt = min(b["dt"] for b in ok)
-    tau_half = max(b["tau_half"] for b in ok)
+    tau_half = min(b["tau_half"] for b in ok)
     tau_grid = np.arange(-tau_half, tau_half + dt / 2, dt)
     out = {}
     for key in PIXELS:
