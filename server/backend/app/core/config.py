@@ -84,10 +84,11 @@ class Settings(BaseSettings):
     WATERFALLS_PUBLIC_URL: str = "https://epic-astronomy.org"
     # trial DMs span the CHIME DM +- FACTOR x its quoted error, within [MIN, MAX]
     FRB_DM_HALF_FACTOR: float = 10.0
-    # at least +-20 pc cm^-3, so the trials reach well beyond where the CHIME DM
-    # could lie and show how high noise peaks get elsewhere in DM
-    FRB_DM_HALF_MIN: float = 20.0
-    FRB_DM_HALF_MAX: float = 25.0
+    # +-50 pc cm^-3 for every event, far beyond where the CHIME DM could lie,
+    # to show how high noise peaks get elsewhere in DM. The lowest band's
+    # transform then needs about 2 GB of memory per pixel (workers have 251 GB)
+    FRB_DM_HALF_MIN: float = 50.0
+    FRB_DM_HALF_MAX: float = 50.0
     # combine the bands of an event this many hours after its watch ends, even if some are missing
     FRB_COMBINE_AFTER_H: float = 6.0
     # the imager's geometry code and Python environment, for source positions

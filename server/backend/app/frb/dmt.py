@@ -42,7 +42,7 @@ from app.frb.products import CHIME_REF_MHZ, FETCH_CHUNK_S, K_DM, N_POL, _robust,
 
 log = logging.getLogger(__name__)
 
-VERSION = 6
+VERSION = 7
 DM_STEP = 0.05
 TAU_HALF = 60.0  # shortest span of arrival offsets searched and stored, s
 MAX_TAU_HALF = 900.0

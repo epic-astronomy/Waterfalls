@@ -42,6 +42,10 @@ const { data, pending } = await useLazyAsyncData<DmtResponse | null>(
   { watch: [() => props.eventId, pixel], default: () => null }
 )
 
+function splitRows(flat: Float32Array, nRows: number, nCols: number) {
+  return Array.from({ length: nRows }, (_, i) => Array.from(flat.subarray(i * nCols, (i + 1) * nCols)))
+}
+
 function b64ToF32(b64: string) {
   const bin = atob(b64)
   const u8 = new Uint8Array(bin.length)
@@ -113,9 +117,9 @@ const transforms = computed(() => (data.value?.transforms ?? []).map(t => ({
   ...t,
   curve: t.snr_dm ? Array.from(b64ToF32(t.snr_dm)) : [],
   dms: Array.from({ length: t.n_dm }, (_, i) => t.dm_lo + i * t.dm_step),
-  mapRows: t.map && t.map_n_dm && t.map_n_tau
-    ? Array.from({ length: t.map_n_dm }, (_, i) => Array.from(b64ToF32(t.map!).subarray(i * t.map_n_tau!, (i + 1) * t.map_n_tau!)))
-    : null
+  // decode each map once and slice it into rows (decoding it once per row
+  // took minutes for the 2001-row maps of a +-50 pc cm^-3 search)
+  mapRows: t.map && t.map_n_dm && t.map_n_tau ? splitRows(b64ToF32(t.map), t.map_n_dm, t.map_n_tau) : null
 })))
 const combined = computed(() => transforms.value.find(t => t.chan0 == 0))
 const bandTransforms = computed(() => transforms.value.filter(t => t.chan0 != 0))
@@ -134,7 +138,8 @@ function drawGrid() {
   const z = [2, 1, 0, -1, -2].map(py => [-2, -1, 0, 1, 2].map(px => g.find(c => c.px == px && c.py == py)?.snr ?? null))
   const text = z.map(r => r.map(v => v == null ? '' : v.toFixed(1)))
   Plotly.react(el, [{
-    type: 'heatmap', z, x: [-2, -1, 0, 1, 2], y: [2, 1, 0, -1, -2], text, texttemplate: '%{text}', hoverinfo: 'none',
+    type: 'heatmap', z, x: [-2, -1, 0, 1, 2], y: [2, 1, 0, -1, -2], text, texttemplate: '%{text}',
+    hovertemplate: 'pixel (%{x}, %{y})<br>peak S/N %{z:.2f}<extra></extra>',
     colorscale: 'Viridis', zmin: 0, zmax: Math.max(7, ...z.flat().filter((v): v is number => v != null)),
     colorbar: { title: { text: 'S/N', side: 'right', font: { color: ink.value } }, tickfont: { color: muted.value }, thickness: 10 },
     textfont: { color: '#ffffff' }
@@ -159,15 +164,15 @@ function drawCurves() {
   const traces: any[] = bandTransforms.value.map((t, i) => {
     const b = bandOf(t.chan0)
     return { type: 'scatter', mode: 'lines', x: t.dms, y: t.curve, name: b ? bandName(b) : String(t.chan0),
-      line: { width: 1, color: palette[i % palette.length] } }
+      line: { width: 1, color: palette[i % palette.length] }, hovertemplate: 'S/N %{y:.2f}' }
   })
   if (combined.value) {
     traces.push({ type: 'scatter', mode: 'lines', x: combined.value.dms, y: combined.value.curve, name: 'All bands',
-      line: { width: 2.5, color: ink.value } })
+      line: { width: 2.5, color: ink.value }, hovertemplate: 'S/N %{y:.2f}' })
   }
   Plotly.react(el, traces, {
     height: 300, margin: { l: 55, r: 10, t: 10, b: 45 }, paper_bgcolor: paper.value, plot_bgcolor: paper.value, font: font.value,
-    hovermode: false, xaxis: axis('Trial DM (pc cm⁻³)'), yaxis: axis('Peak S/N in search window'),
+    hovermode: 'x unified', xaxis: { ...axis('Trial DM (pc cm⁻³)'), hoverformat: '.2f' }, yaxis: axis('Peak S/N in search window'),
     legend: { font: { color: ink.value, size: 11 }, orientation: 'h', y: -0.25 },
     shapes: [
       { type: 'line', xref: 'x', yref: 'paper', x0: s.dm_chime, x1: s.dm_chime, y0: 0, y1: 1, line: { color: muted.value, dash: 'dash', width: 1 } },
@@ -179,7 +184,8 @@ function drawCurves() {
 function mapTrace(t: (typeof transforms.value)[number], xaxis = 'x', yaxis = 'y', showscale = true) {
   const taus = Array.from({ length: t.map_n_tau! }, (_, j) => t.map_tau0! + j * t.map_dtau!)
   const dms = Array.from({ length: t.map_n_dm! }, (_, i) => t.dm_lo + (i + 0.5) * t.map_dm_step! - t.dm_step / 2)
-  return { type: 'heatmap', x: taus, y: dms, z: t.mapRows, xaxis, yaxis, coloraxis: 'coloraxis', hoverongaps: false, showscale }
+  return { type: 'heatmap', x: taus, y: dms, z: t.mapRows, xaxis, yaxis, coloraxis: 'coloraxis', hoverongaps: false, showscale,
+    hovertemplate: 'arrival %{x:.1f} s<br>DM %{y:.2f}<br>S/N %{z:.2f}<extra></extra>' }
 }
 const colorAxis = computed(() => ({
   colorscale: 'Viridis', cmin: -2, cmax: Math.max(5, Math.ceil(summary.value?.snr_threshold ?? 7)),
@@ -218,7 +224,7 @@ function drawMap() {
     textfont: { color: '#38bdf8', size: 11 }, marker: { symbol: 'x-thin-open', size: 14, color: '#38bdf8', line: { color: '#38bdf8', width: 2 } } })
   Plotly.react(el, traces, {
     height: 360, margin: { l: 70, r: 10, t: 10, b: 45 }, paper_bgcolor: paper.value, plot_bgcolor: paper.value, font: font.value,
-    hovermode: false, showlegend: false, coloraxis: colorAxis.value,
+    hovermode: 'closest', showlegend: false, coloraxis: colorAxis.value,
     xaxis: axis('Arrival at 400 MHz relative to CHIME (s)'), yaxis: axis('Trial DM (pc cm⁻³)'),
     shapes: [-s.search_tau_s, s.search_tau_s].map(x => ({ type: 'line', xref: 'x', yref: 'paper', x0: x, x1: x, y0: 0, y1: 1,
       line: { color: dark.value ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)', dash: 'dash', width: 1 } }))
@@ -233,7 +239,7 @@ function drawBandMaps() {
   const gap = 0.3 / n / 2
   const layout: Record<string, any> = {
     height: n * 150 + 70, margin: { l: 70, r: 10, t: 20, b: 45 }, paper_bgcolor: paper.value, plot_bgcolor: paper.value,
-    font: font.value, hovermode: false, showlegend: false, coloraxis: colorAxis.value, annotations: []
+    font: font.value, hovermode: 'closest', showlegend: false, coloraxis: colorAxis.value, annotations: []
   }
   const traces = rows.map((t, i) => {
     const s = i == 0 ? '' : String(i + 1)
