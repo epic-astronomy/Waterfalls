@@ -36,7 +36,7 @@ const nPols = computed(() => props.specgmQuery.n_pols)
 // it on and off, or returning to a mode, costs nothing
 const IMAGE_DT_S = 0.0836
 // kept across windows and sessions, which rebuild this component
-const rfiOn = useState('spectrogram-flag-rfi', () => false)
+const rfiOn = useState('spectrogram-flag-rfi', () => true)
 const rfiMasks = ref<Record<string, Uint8Array[]>>({})
 const rfiPending = ref(false)
 let rfiWorker: Worker | null = null
