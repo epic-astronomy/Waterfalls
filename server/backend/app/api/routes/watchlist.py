@@ -11,6 +11,7 @@ from app.models.epic_data import (
     epic_watchdog,
     epic_watchdog_public,
     chime_frb_trigger,
+    epic_img_metadata,
 )
 from app.core.config import settings
 
@@ -90,6 +91,40 @@ class WatchListRow(BaseModel):
     voevent: str | None = None
     category: str
     origin: str
+    # whether EPIC recorded the source: 'recording' (watched and imaged in the
+    # last few minutes), 'not_recording' (watched, nothing recent),
+    # 'observed' (watch over, with data) or 'not_observed' (no data at all)
+    data_status: str | None = None
+
+
+# a watched source counts as being recorded if a session reached this recently
+RECORDING_WINDOW = timedelta(minutes=10)
+
+
+def data_status(session, rows) -> dict[int, str]:
+    """The data status of each watch-list entry, from the imaging sessions
+    that overlap its watch"""
+    names = list({w.source for w in rows})
+    if not names:
+        return {}
+    spans: dict[str, list] = {}
+    for name, s0, s1 in session.exec(
+        select(epic_img_metadata.source_name, epic_img_metadata.session_start, epic_img_metadata.session_end)
+        .where(epic_img_metadata.source_name.in_(names))
+        .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
+        .distinct()
+    ).all():
+        spans.setdefault(name, []).append((s0, s1))
+    now = datetime.utcnow()
+    out = {}
+    for w in rows:
+        t0, t1 = w.t_start or datetime.min, w.t_end or datetime.max
+        mine = [(a, b) for a, b in spans.get(w.source, []) if a < t1 and b > t0]
+        if w.watch_status == "watching":
+            out[w.id] = "recording" if any(b > now - RECORDING_WINDOW for _, b in mine) else "not_recording"
+        else:
+            out[w.id] = "observed" if mine else "not_observed"
+    return out
 
 
 class WatchListPage(BaseModel):
@@ -138,7 +173,8 @@ async def get_all_sources(
         .limit(pagination.limit)
     )
     rows = session.exec(stmnt).all()
-    data = [WatchListRow(**w.model_dump(), category=c, origin=o) for w, c, o in rows]
+    status = data_status(session, [w for w, _, _ in rows])
+    data = [WatchListRow(**w.model_dump(), category=c, origin=o, data_status=status.get(w.id)) for w, c, o in rows]
     return WatchListPage(data=data, count=count)
 
 

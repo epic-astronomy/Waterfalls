@@ -58,6 +58,15 @@ const selectedColumns = ref(columns.slice(0, 6))
 const columnsTable = computed(() => columns.filter((column) => selectedColumns.value.includes(column)))
 const selectedRow: Ref<WatchListItem[] | undefined> = ref([])
 
+// What EPIC did during the watch, from the imaging sessions (data_status):
+// a watch can be active or over while EPIC was not running
+function observationStatus(row: WatchListItem & { origin?: string, data_status?: string }) {
+  if (row.watch_status == 'watching')
+    return row.data_status == 'not_recording' ? { label: 'Not recording', color: 'amber' } : { label: 'Active', color: 'primary' }
+  if (row.origin != 'chime') return { label: 'Inactive', color: 'gray' }
+  return row.data_status == 'not_observed' ? { label: 'Not observed', color: 'red' } : { label: 'Completed', color: 'orange' }
+}
+
 // every click, even on the row already selected, so the page can move on
 const emit = defineEmits<{ picked: [row: WatchListItem] }>()
 function rowSelect(row: WatchListItem) {
@@ -169,8 +178,7 @@ const tableData = computed(() => {
       </template>
 
       <template #watch_status-data="{ row }">
-        <UBadge variant="soft" :label="row.watch_status == 'watching' ? 'Active' : row.origin == 'chime' ? 'Completed' : 'Inactive'"
-          :color="row.watch_status == 'watching' ? 'primary' : row.origin == 'chime' ? 'orange' : 'gray'" size="xs"></UBadge>
+        <UBadge variant="soft" :label="observationStatus(row).label" :color="observationStatus(row).color" size="xs"></UBadge>
       </template>
 
       <template #t_start-data="{row}">
