@@ -70,10 +70,6 @@ const fetchSessionDisabled = computed(() => {
     sessionValidMsg.value = 'Start date cannot be greater than the end date.'
     return true
   }
-  if ((end.getTime() - start.getTime()) / 1000 > 3600 * 24 * 30) {
-    sessionValidMsg.value = 'Sessions can only be queried in windows of 30 days at a time.'
-    return true
-  }
   sessionValidMsg.value = ''
   return false
 })
@@ -101,22 +97,24 @@ const specgmEnd=ref('')
 const specgmValidMsg = ref('')
 // The tabs are the only navigation, so the defaults the Next buttons used to
 // set are set when a source or a session is selected instead.
-// A new source: the last day of its watch (the whole watch for an FRB),
-// with its sessions listed at once
+// A new source: all its sessions over the whole watch, newest first, on the
+// Session tab. Long watches such as the Sun's can be narrowed with the time
+// filter there.
 watch(watchSource, (src) => {
   if (!src) return
   imgSession.value = undefined
   specgmQuery.value = undefined
-  const end = new Date(obsEnd.value + 'Z').getTime()
-  const start = Math.max(new Date(obsStart.value + 'Z').getTime(), end - 3600 * 24 * 1000)
-  sessionStart.value = new Date(start).toISOString().slice(0, 19)
-  sessionEnd.value = new Date(end).toISOString().slice(0, 19)
+  sessionStart.value = obsStart.value
+  sessionEnd.value = obsEnd.value
   fetchSession()
+  tabIndex.value = 1
 })
 
 // A new session: the first 3 minutes, unless the FRB timeline chooses the window
 watch(imgSession, (session) => {
-  if (!session || isFrb.value) return
+  if (!session) return
+  tabIndex.value = 2
+  if (isFrb.value) return
   specgmQuery.value = undefined
   specgmStart.value = selectedSessionStart.value
   specgmEnd.value = new Date(new Date(selectedSessionStart.value + 'Z').getTime() + 180 * 1000).toISOString().slice(0, -1)
@@ -194,7 +192,7 @@ useSeoMeta({
 
       <template #sessionSelection>
         <div v-if="watchSource" class="mt-2">
-          <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
+          <UCard v-if="!isFrb" :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
             <div class="flex flex-wrap justify-evenly items-center">
 
               <div class="flex flex-wrap justify-center items-center gap-2">
