@@ -1,3 +1,12 @@
+<script lang="ts">
+import { ringCache } from '~/lib/ringCache'
+import type { SpecgmData } from '~/types'
+// Recent windows, raw and interpolated, kept across windows and sessions
+// (which rebuild this component), so toggling Interpolate at source or
+// returning to a window does not fetch it again. Eight slots of about 3 MB.
+const spectrogramCache = ringCache<SpecgmData[]>(8)
+</script>
+
 <script setup lang="ts">
 import type { PropType } from 'vue';
 import type { SpecgmData, SpecgmQuery } from '~/types'
@@ -272,18 +281,18 @@ const selectedMode = ref('xx_yy')
 
 const { pending, data: specgmDataBytes, error: error } = await useLazyAsyncData<SpecgmData[]>(
   'specfetch',
-  () => $fetch(rtConfig.public.fastapiBase + '/imaging/spectrogram/',
-    {
-      query: {
-        start_time: props.specgmQuery.start_time,
-        end_time: props.specgmQuery.end_time,
-        // session_id: props.specgmQuery.session_id,
-        chan0: props.specgmQuery.chan0,
-        source_name: props.specgmQuery.source_name,
-        pixel_positions: props.specgmQuery.pixel_positions,
-        interpolate: interpOn.value ? true : undefined
-      }
-    })
+  () => {
+    const query = {
+      start_time: props.specgmQuery.start_time,
+      end_time: props.specgmQuery.end_time,
+      chan0: props.specgmQuery.chan0,
+      source_name: props.specgmQuery.source_name,
+      pixel_positions: props.specgmQuery.pixel_positions,
+      interpolate: interpOn.value ? true : undefined
+    }
+    return spectrogramCache(JSON.stringify(query),
+      () => $fetch<SpecgmData[]>(rtConfig.public.fastapiBase + '/imaging/spectrogram/', { query }))
+  }
   , {
     watch: [() => props.specgmQuery, interpOn],
   }
