@@ -35,6 +35,22 @@ const tz = useTimeZone()
 
 // Events a page at a time, sorted by the server. Without a sort column the
 // most recent trigger comes first.
+// A calendar day, in the chosen time zone, lists only the events triggered
+// that day; days with an event carry a dot, as on the LWA-SV watch list
+const eventDay = ref<string | null>(null)
+const eventDayRange = computed(() => eventDay.value ? tz.dayRange(eventDay.value) : null)
+const markRange = ref<[string, string] | null>(null)
+const { data: eventTimes } = await useLazyAsyncData<{ time: string }[]>('frb-event-days', () => markRange.value
+  ? $fetch(rtConfig.public.fastapiBase + '/watchlist/events/', {
+    query: { start: tz.dayRange(markRange.value[0])[0] + 'Z', end: tz.dayRange(markRange.value[1])[1] + 'Z', category: 'frb' }
+  })
+  : Promise.resolve([]), { watch: [markRange, tz.mode], default: () => [], server: false })
+const eventDays = computed(() => {
+  const out: Record<string, number> = {}
+  for (const e of eventTimes.value ?? []) { const k = tz.dayKey(e.time); out[k] = (out[k] ?? 0) + 1 }
+  return out
+})
+
 const page = ref(1)
 const rowsPerPage = ref(10)
 const availRowsPerPage = [5, 10, 25]
@@ -42,17 +58,32 @@ const sort = ref<{ column: string, direction: 'asc' | 'desc' }>({ column: '', di
 const { data: events, pending: eventsPending } = await useLazyAsyncData<FrbEventPage>(
   'frb-events',
   () => $fetch(rtConfig.public.fastapiBase + '/frb/events/', {
-    query: { page: page.value, nrows: rowsPerPage.value, sort: sort.value.column || undefined, order: sort.value.direction }
+    query: {
+      page: page.value, nrows: rowsPerPage.value, sort: sort.value.column || undefined, order: sort.value.direction,
+      start: eventDayRange.value ? eventDayRange.value[0] + 'Z' : undefined,
+      end: eventDayRange.value ? eventDayRange.value[1] + 'Z' : undefined
+    }
   }),
-  { watch: [page, rowsPerPage, sort], default: () => ({ data: [], count: 0 }) })
-watch([rowsPerPage, sort], () => { page.value = 1 })
+  { watch: [page, rowsPerPage, sort, eventDayRange], default: () => ({ data: [], count: 0 }) })
+watch([rowsPerPage, sort, eventDayRange], () => { page.value = 1 })
 const pageTotal = computed(() => events.value.count)
 const pageFrom = computed(() => Math.min((page.value - 1) * rowsPerPage.value + 1, pageTotal.value))
 const pageTo = computed(() => Math.min(page.value * rowsPerPage.value, pageTotal.value))
 
 // Nothing is shown until an event is chosen, from the table or a link
 const selectedId = ref<number | null>(Number(route.query.event) || null)
-watch(selectedId, id => router.replace({ query: { ...route.query, event: id ?? undefined } }))
+// Two tabs as on the LWA-SV page: the event list, and the analysis of the
+// selected event. A link with ?event= opens on the analysis.
+const tabItems = [
+  { label: 'Event', icon: 'i-material-symbols-view-list', slot: 'events' },
+  { label: 'Analysis', icon: 'i-material-symbols-key-visualizer', slot: 'analysis' }
+]
+const tabIndex = ref(route.query.tab != null ? (Number(route.query.tab) ? 1 : 0) : (selectedId.value ? 1 : 0))
+function pickEvent(row: FrbEventItem) {
+  selectedId.value = row.id
+  tabIndex.value = 1 // also when the same event is clicked again
+}
+watch([selectedId, tabIndex], ([id, tab]) => router.replace({ query: { ...route.query, event: id ?? undefined, tab: String(tab) } }))
 
 const { data: product, pending: productPending } = await useLazyAsyncData<FrbEventProducts | null>(
   'frb-event',
@@ -271,29 +302,40 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
 </script>
 
 <template>
-  <!-- the selected event instead of a title -->
-  <PageToolbar>
-      <span v-if="product" class="text-sm truncate">
-        <span class="font-semibold">{{ product.source }}</span>
-        <span class="text-gray-500 dark:text-gray-400"> · DM {{ product.dm.toFixed(1) }} pc cm⁻³ · burst at {{ product.f_ref_mhz }} MHz {{ timeText(product.t_ref) }}</span>
-      </span>
-      <span v-else class="text-sm text-gray-500 dark:text-gray-400">Select an event to see its analysis</span>
-    <template #right><TimeZoneToggle /></template>
-  </PageToolbar>
+  <!-- the sidebar names the page; the bar stays only on small screens, for the menu button -->
+  <UDashboardNavbar class="lg:hidden" title="FRB events" />
   <UDashboardPanelContent>
-    <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }" class="relative">
+    <UTabs :items="tabItems" v-model="tabIndex">
+      <template #default="{ item, index, selected }">
+        <div class="flex items-center gap-2 relative truncate">
+          <UIcon :name="item.icon" class="w-4 h-4 flex-shrink-0" />
+          <span class="truncate">{{ index + 1 }}. {{ item.label }}</span>
+          <span v-if="selected" class="absolute -right-4 w-2 h-2 rounded-full bg-primary-500 dark:bg-primary-400" />
+        </div>
+      </template>
+      <template #events>
+    <div>
+    <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }" class="relative mt-2">
       <UProgress v-if="eventsPending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <div class="flex flex-wrap justify-between items-center gap-3 px-1 pb-2">
         <div class="flex items-center gap-1.5">
           <span class="text-sm leading-5">Rows per page</span>
           <USelect v-model="rowsPerPage" :options="availRowsPerPage" />
+          <SpectrogramDayPicker v-model="eventDay" :marks="eventDays" class="ml-2" @range="(a, b) => markRange = [a, b]">
+            <template #legend>
+              <span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />CHIME/FRB event</span>
+            </template>
+          </SpectrogramDayPicker>
         </div>
-        <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
-          label="Default order" @click="sort = { column: '', direction: 'asc' }" />
+        <div class="flex items-center gap-3">
+          <UButton v-if="sort.column" size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-uturn-left"
+            label="Default order" @click="sort = { column: '', direction: 'asc' }" />
+          <TimeZoneToggle />
+        </div>
       </div>
       <UTable :rows="eventRows" :columns="eventColumns" :loading="eventsPending" v-model:sort="sort" sort-mode="manual"
         :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No CHIME/FRB events have been watched.' }"
-        @select="(row: FrbEventItem) => selectedId = row.id">
+        @select="pickEvent">
         <template #t_ref-data="{ row }">{{ row.t_ref ? tz.dateTime(row.t_ref) : '' }}</template>
         <template #event_time-data="{ row }">{{ tz.dateTime(row.event_time) }}</template>
       </UTable>
@@ -310,14 +352,21 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
       </div>
     </UCard>
 
-    <UCard v-if="!selectedId" :ui="{ body: { padding: 'px-4 py-10' } }" class="mt-2">
+    </div>
+      </template>
+      <template #analysis>
+    <!-- The blocks all appear when the event's data arrive, and inside the tab
+         panel Vue inserted the DM transform ahead of the others; a fixed CSS
+         order keeps them in reading order whatever the DOM order -->
+    <div class="flex flex-col">
+    <UCard v-if="!selectedId" :ui="{ body: { padding: 'px-4 py-10' } }" class="mt-2 order-1">
       <div class="flex flex-col items-center gap-2 text-center text-gray-500 dark:text-gray-400">
         <UIcon name="i-heroicons-cursor-arrow-rays" class="w-8 h-8" />
-        <p class="text-base">Select an event in the table above to see its analysis.</p>
+        <p class="text-base">Select an event in the Event tab to see its analysis.</p>
       </div>
     </UCard>
 
-    <UCard v-if="product" :ui="{ body: { padding: 'px-3 py-3 sm:p-4' } }" class="mt-2 relative">
+    <UCard v-if="product" :ui="{ body: { padding: 'px-3 py-3 sm:p-4' } }" class="mt-2 relative order-2">
       <UProgress v-if="productPending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <div class="flex flex-wrap items-baseline justify-between gap-2">
         <h2 class="text-xl font-semibold">{{ product.source }}</h2>
@@ -342,23 +391,26 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
     </UCard>
 
     <template v-if="bands.length">
-      <UCard :ui="{ body: { padding: 'px-3 py-2 sm:px-4' } }" class="mt-2">
+      <UCard :ui="{ body: { padding: 'px-3 py-2 sm:px-4' } }" class="mt-2 order-3">
         <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <div class="flex items-center gap-2"><span>Window</span><USelect v-model="zoomS" :options="zoomOptions" option-attribute="label" /></div>
           <div class="flex items-center gap-2"><span>Colour range</span><USelect v-model="zMax" :options="zMaxOptions" option-attribute="label" /></div>
           <div class="flex items-center gap-2"><span>Time series smoothing</span><USelect v-model="smoothS" :options="smoothOptions" option-attribute="label" /></div>
         </div>
       </UCard>
-      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="mt-2">
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="mt-2 order-3">
         <div class="px-2 pt-1 text-sm font-medium">Dedispersed spectrograms</div>
         <div ref="imageDiv" class="w-full"></div>
       </UCard>
-      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="mt-2">
+      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }" class="mt-2 order-3">
         <div class="px-2 pt-1 text-sm font-medium">Band-averaged time series</div>
         <div ref="seriesDiv" class="w-full"></div>
       </UCard>
     </template>
-    <UCard v-else-if="product?.computed && !noDataBands.length" class="mt-2">No band has data for this event.</UCard>
-    <SpectrogramFrbDmt v-if="product && selectedId" :event-id="selectedId" />
+    <UCard v-else-if="product?.computed && !noDataBands.length" class="mt-2 order-3">No band has data for this event.</UCard>
+    <SpectrogramFrbDmt v-if="product && selectedId" :event-id="selectedId" class="order-4" />
+    </div>
+      </template>
+    </UTabs>
   </UDashboardPanelContent>
 </template>

@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -38,13 +39,21 @@ async def get_frb_events(
     nrows: int = Query(10, ge=1, le=100),
     sort: str | None = None,
     order: Literal["asc", "desc"] = "desc",
+    start: datetime | None = None,
+    end: datetime | None = None,
 ):
     """CHIME/FRB watches with a summary of their dedispersed products, a page
     at a time. By default the most recent trigger comes first; a column name
-    in `sort` orders by that column instead."""
+    in `sort` orders by that column instead. With `start` and `end`, only the
+    events triggered in that period (a calendar day on the page)."""
     schema = settings.EPIC_DATA_SCHEMA
+    period = ""
+    params: dict = {}
+    if start is not None and end is not None:
+        period = "and w.event_time >= :start and w.event_time < :end "
+        params = dict(start=start.replace(tzinfo=None), end=end.replace(tzinfo=None))
     count = session.execute(
-        text("select count(*) from public.epic_watchdog where event_type = 'FRB detection'")
+        text("select count(*) from public.epic_watchdog w where w.event_type = 'FRB detection' " + period), params
     ).scalar_one()
     key = SORT_ALIASES.get(sort, sort)
     if key in EVENT_COLUMNS:
@@ -58,10 +67,10 @@ async def get_frb_events(
             "from public.epic_watchdog w "
             "left join (select event_id, count(*) filter (where status = 'ok') n_bands, max(peak_snr) max_snr, "
             f"max(created_at) computed_at from {schema}.epic_frb_products group by event_id) p on p.event_id = w.id "
-            "where w.event_type = 'FRB detection' "
+            "where w.event_type = 'FRB detection' " + period +
             f"order by {ordering} limit :limit offset :offset"
         ),
-        dict(limit=nrows, offset=(page - 1) * nrows),
+        dict(limit=nrows, offset=(page - 1) * nrows, **params),
     ).all()
     data = [
         dict(id=r[0], t_start=r[1], t_end=r[2], watch_status=r[3], **dict(zip(names, r[4:])), f_ref_mhz=CHIME_REF_MHZ)
