@@ -188,21 +188,8 @@ function cellClass(c: { inSession: boolean, inBurst: boolean, isShown: boolean }
 <template>
   <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-3' } }">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-sm">
-      <span>Session timeline, {{ CELL_S / 60 }} min per cell <span class="text-gray-500 dark:text-gray-400">(← → to step)</span>
-        · <NuxtLink :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`" class="text-primary-500 hover:underline">All bands, dedispersed</NuxtLink></span>
-      <span class="flex flex-wrap items-center gap-3 text-gray-500 dark:text-gray-400">
-        <span class="flex items-center gap-1">
-          <svg class="w-3 h-3 rounded-sm bg-amber-300 dark:bg-amber-500/70" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
-            <line x1="0" y1="0.15" x2="1" y2="0.85" vector-effect="non-scaling-stroke" stroke-width="1.5" class="stroke-amber-800 dark:stroke-amber-100" />
-          </svg>Burst arrival and its track through the band
-        </span>
-        <span class="flex items-center gap-1">
-          <span class="inline-block w-1.5 h-3 rounded-sm bg-primary-500/70" />Digest Stokes I
-        </span>
-        <span class="flex items-center gap-1">
-          <span class="inline-block w-3 h-3 rounded-sm bg-gray-200 dark:bg-gray-700 ring-2 ring-primary-500 dark:ring-primary-400" />Displayed
-        </span>
-      </span>
+      <span>Session timeline, {{ CELL_S / 60 }} min per cell <span class="text-gray-500 dark:text-gray-400">(← → to step)</span></span>
+      <NuxtLink :to="`/waterfalls/spectrograms/frb?event=${watchSource.id}`" class="text-primary-500 hover:underline">All bands, dedispersed</NuxtLink>
     </div>
     <div class="space-y-1.5">
       <div v-for="row in rows" :key="row.id" class="flex items-start gap-2">
