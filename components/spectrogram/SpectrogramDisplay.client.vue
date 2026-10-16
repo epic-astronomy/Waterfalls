@@ -299,6 +299,9 @@ function updatePlotData() {
 
 function updatePlot() {
   if (plotDataRaw.length < 1) return
+  // with Flag RFI on, draw only once this window's mask is ready, so the
+  // unflagged data never flash up; the previous plot stays, dimmed
+  if (rfiOn.value && !rfiMasks.value[selectedMode.value]) return
   // In a hidden tab the plot has no width and Plotly falls back to 700 px,
   // so wait until the tab is shown; the resize observer draws it then
   if (!plotlyDiv.value || plotlyDiv.value.clientWidth == 0) return
@@ -502,9 +505,9 @@ onBeforeUnmount(() => {
 
 
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
-      <UProgress v-if="pending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
+      <UProgress v-if="pending || (rfiOn && rfiPending)" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <p v-if="noData && !pending" class="p-4 text-sm text-gray-500 dark:text-gray-400">No images of the source were stored in this window.</p>
-      <div :id="plotlyDivId" ref="plotlyDiv"></div>
+      <div :id="plotlyDivId" ref="plotlyDiv" class="transition-opacity" :class="rfiOn && rfiPending ? 'opacity-40' : ''"></div>
     
     </UCard>
 
