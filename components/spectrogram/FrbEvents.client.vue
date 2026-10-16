@@ -408,7 +408,8 @@ const noDataBands = computed(() => (product.value?.bands ?? []).filter(b => b.st
       </UCard>
     </template>
     <UCard v-else-if="product?.computed && !noDataBands.length" class="mt-2 order-3">No band has data for this event.</UCard>
-    <SpectrogramFrbDmt v-if="product && selectedId" :event-id="selectedId" class="order-4" />
+    <!-- rebuilt for each event, so plots of the previous one never linger -->
+    <SpectrogramFrbDmt v-if="product && selectedId" :key="selectedId" :event-id="selectedId" class="order-4" />
     </div>
       </template>
     </UTabs>

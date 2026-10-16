@@ -52,6 +52,8 @@ const fmt = (v: number | null | undefined, digits = 1) => v == null ? '' : v.toF
 const bandName = (b: { f_lo_mhz: number, f_hi_mhz: number }) => `${b.f_hi_mhz.toFixed(2)}–${b.f_lo_mhz.toFixed(2)} MHz`
 
 const summary = computed(() => data.value?.summary)
+// an event whose bands all lack data has an analysis record but nothing to show
+const hasData = computed(() => !!summary.value?.bands?.some(b => b.status == 'ok'))
 
 const verdict = computed(() => {
   const s = summary.value
@@ -243,7 +245,7 @@ onBeforeUnmount(() => observer?.disconnect())
     <UCard :ui="{ body: { padding: 'px-3 py-3 sm:p-4' } }" class="relative">
       <UProgress v-if="pending" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <h2 class="text-xl font-semibold">Dispersion measure transform</h2>
-      <template v-if="data?.computed && summary">
+      <template v-if="data?.computed && summary && hasData">
         <p class="mt-2 text-sm text-gray-600 dark:text-gray-300 max-w-5xl">
           Every pixel of the 5x5 grid around the source is searched at trial DMs from {{ fmt(summary.dm_lo, 1) }} to
           {{ fmt(summary.dm_hi, 1) }} pc cm⁻³ in steps of {{ summary.dm_step }}, at the full 83.6 ms resolution. RFI is masked
@@ -262,13 +264,16 @@ onBeforeUnmount(() => observer?.disconnect())
           the station footprint and projected to the source elevation. The limits assume a burst as wide as the smearing.
         </p>
       </template>
+      <p v-else-if="data?.computed && summary" class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+        No band recorded the source during the watch, so there is nothing to transform.
+      </p>
       <p v-else-if="!pending" class="mt-2 text-sm text-gray-600 dark:text-gray-300">
         The DM transform of this event has not been computed yet. It runs on the worker nodes after the watch ends, and the bands are
         combined once all of them are done.
       </p>
     </UCard>
 
-    <template v-if="data?.computed && summary">
+    <template v-if="data?.computed && summary && hasData">
       <div class="grid gap-2 lg:grid-cols-3">
         <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
           <div class="px-2 pt-1 text-sm font-medium">Peak S/N of every pixel, all bands combined</div>
@@ -287,7 +292,8 @@ onBeforeUnmount(() => observer?.disconnect())
         <div class="px-2 pt-1 text-sm font-medium">
           DM against arrival time, all bands combined, pixel ({{ pixel.px }}, {{ pixel.py }})
         </div>
-        <div class="px-2 text-xs text-gray-500 dark:text-gray-400">Dashed lines bound the search window, the circle marks the peak</div>
+        <div class="px-2 text-xs text-gray-500 dark:text-gray-400">The transforms of the bands with data, aligned on the arrival at 400 MHz and
+          stacked as the sum of their S/N over the square root of their number. Dashed lines bound the search window, the circle marks the peak</div>
         <div ref="mapDiv" class="w-full" />
       </UCard>
       <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
