@@ -32,12 +32,12 @@ const sourceNames = ref<String[]>([])
 //////////////////////////////////
 const { pending, data: digestSrcs, error: error } = await useLazyAsyncData<DailyDigestSrc[]>(
   'dailysrcfetch',
-  () => $fetch(rtConfig.public.fastapiBase + '/imaging/dailyobs/',
+  () => digestDay.value ? $fetch(rtConfig.public.fastapiBase + '/imaging/dailyobs/',
     {
       query: {
         day: digestDay.value
       }
-    })
+    }) : Promise.resolve([])
   , {
     watch: [digestDay],
     default: () => []
@@ -108,7 +108,7 @@ const fetchTrigger = ref('')
 const selectedCfreq = ref<cfreqOpts>()
 const { pending: pending2, data: digestData, error: dataError } = await useLazyAsyncData<DailyDigestResp>(
   'dailydatafetch',
-  () => $fetch(rtConfig.public.fastapiBase + '/imaging/dailydigest/',
+  () => !fetchTrigger.value ? Promise.resolve(null) : $fetch(rtConfig.public.fastapiBase + '/imaging/dailydigest/',
     {
       query: {
         day: digestDay.value,
@@ -159,50 +159,44 @@ const plotlyAxes = reactive({
   yLabels: ref(Array<number>())
 })
 
-var plotlyHTMLElement
-var plotlyLayout = computed(() => {
-  // if (!selectedCfreq.value) return
-  let nChans = Math.round(128 * CHAN_BW_HZ / chan_bw_hz.value)
-  return {
-    title: {
-      text: selectedSrc.value + ' | LWA-Sevilleta',
-      font: {
-        family: 'Courier New, monospace',
-        size: 24,
-        color: colorMode.value == 'dark' ? 'white' : 'black'
-      }
-    },
-    xaxis: {
-      title: {
-        text: 'Time (UTC)',
-        font: {
-          family: 'Courier New, monospace',
-          size: 18,
-          color: colorMode.value == 'dark' ? 'white' : 'black'
-        }
-      },
-      tickfont: {
-        color: colorMode.value == 'dark' ? 'white' : 'black',
-        family: 'Courier New, monospace'
-      },
-      tickcolor: colorMode.value == 'dark' ? 'white' : 'black'
-    },
-    yaxis: {
-      title: {
-        text: 'Frequency (MHz)',
-        font: {
-          family: 'Courier New, monospace',
-          size: 18,
-          color: colorMode.value == 'dark' ? 'white' : 'black'
-        }
-      },
-      tickfont: {
-        color: colorMode.value == 'dark' ? 'white' : 'black'
-      },
-      tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
-    },
-    paper_bgcolor: colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)', autosize: true
+// One panel per band, highest frequency at the top, stacked without gaps on
+// a shared time axis. Each band has its own colour scale, because the sky
+// brightness differs by an order of magnitude across the bands.
+const PANEL_PX = 130
+const ink = computed(() => colorMode.value == 'dark' ? 'white' : 'black')
+const paper = computed(() => colorMode.value == 'dark' ? '#131826' : 'rgb(255,255,255)')
+const bandKeys = computed(() => Object.keys(plotTraces.value).map(Number).sort((a, b) => b - a))
+const plotHeight = computed(() => bandKeys.value.length * PANEL_PX + 110)
+const utcStr = (ms: number) => new Date(ms).toISOString().slice(0, 23).replace('T', ' ')
+
+// zoom window from the slider, in UTC ms; null for the whole day
+const zoom = ref<[number, number] | null>(null)
+
+const plotlyLayout = computed(() => {
+  const n = bandKeys.value.length
+  const font = { family: 'Courier New, monospace', color: ink.value }
+  const layout: Record<string, any> = {
+    title: { text: selectedSrc.value + ' | LWA-Sevilleta', font: { ...font, size: 22 } },
+    height: plotHeight.value, margin: { l: 80, r: 90, t: 50, b: 55 },
+    paper_bgcolor: paper.value, plot_bgcolor: paper.value, font, hovermode: 'closest', showlegend: false,
+    annotations: [{ text: 'Frequency (MHz)', textangle: -90, xref: 'paper', yref: 'paper', x: 0, xshift: -70, y: 0.5,
+      showarrow: false, font: { ...font, size: 16 } }]
   }
+  bandKeys.value.forEach((_, i) => {
+    const s = i == 0 ? '' : String(i + 1)
+    const top = 1 - i / n, bottom = 1 - (i + 1) / n
+    layout[`xaxis${s}`] = {
+      anchor: `y${s}`, type: 'date', matches: i == 0 ? undefined : 'x', showticklabels: i == n - 1,
+      title: i == n - 1 ? { text: 'Time (UTC)', font: { ...font, size: 16 } } : undefined,
+      tickfont: font, tickcolor: ink.value, linecolor: ink.value, showline: true, mirror: true, ticks: 'outside',
+      range: zoom.value ? zoom.value.map(utcStr) : undefined
+    }
+    layout[`yaxis${s}`] = {
+      anchor: `x${s}`, domain: [bottom, top], tickfont: font, tickcolor: ink.value, linecolor: ink.value,
+      showline: true, mirror: true, ticks: 'outside', nticks: 4
+    }
+  })
+  return layout
 })
 
 var plotlyConfig = computed(() => {
@@ -210,45 +204,86 @@ var plotlyConfig = computed(() => {
     modeBarButtonsToRemove: ['lasso2d', 'select2d', 'zoom2d', 'pan2d', ' zoomIn2d', 'zoomOut2d', 'autoScale2d', 'zoomIn'],
     toImageButtonOptions: {
       format: 'png', // one of png, svg, jpeg, webp
-      filename: 'EPIC Spectrogram - ' + selectedSrc.value,
+      filename: 'EPIC Daily Digest - ' + selectedSrc.value,
       scale: 3
-    }, responsive: true
+    }, responsive: true, displaylogo: false
   }
 })
 
+// colour limits of a band from its 1st and 99th percentiles, so a few bright
+// or negative outliers do not flatten the rest
+function robustLimits(z: Float32Array[]) {
+  const v: number[] = []
+  for (const row of z) for (let j = 0; j < row.length; j += Math.max(1, Math.floor(row.length / 400))) if (isFinite(row[j])) v.push(row[j])
+  if (!v.length) return {}
+  v.sort((a, b) => a - b)
+  return { zmin: v[Math.floor(0.01 * (v.length - 1))], zmax: v[Math.ceil(0.99 * (v.length - 1))] }
+}
+
 var plotlyTraces = computed(() => {
-  if (!plotTraces.value) return []
-  let traces = []
-  let counter = 0
-  for (const cfreq in plotTraces.value) {
-    let trace = plotTraces.value[cfreq]
-    traces.push({
-      name: String((cfreq / 1e6).toFixed(2)) + ' MHz',
-      z: selectedMode.value == 'i' ? trace.stokes_I : trace.stokes_V, type: 'heatmap',
-      x: trace.img_time, y: trace.freqs,
-      hoverongaps: false, showscale: counter == 0 ? true : false,
+  const n = bandKeys.value.length
+  return bandKeys.value.map((cfreq, i) => {
+    const trace = plotTraces.value[cfreq]
+    const s = i == 0 ? '' : String(i + 1)
+    const z = selectedMode.value == 'i' ? trace.stokes_I : trace.stokes_V
+    return {
+      ...robustLimits(z),
+      name: (cfreq / 1e6).toFixed(2) + ' MHz',
+      z, type: 'heatmap',
+      x: trace.img_time, y: trace.freqs, xaxis: `x${s}`, yaxis: `y${s}`,
+      hoverongaps: false, colorscale: 'Viridis', zsmooth: 'best',
+      hovertemplate: '%{x|%H:%M:%S} UTC<br>%{y:.2f} MHz<br>%{z:.3g}<extra></extra>',
       colorbar: {
-        exponentformat: 'e',
-        bordercolor: colorMode.value == 'dark' ? 'white' : 'black',
-        tickcolor: colorMode.value == 'dark' ? 'white' : 'black',
-        tickfont: {
-          color: colorMode.value == 'dark' ? 'white' : 'black',
-          family: 'Courier New, monospace'
-        }
+        y: 1 - (i + 0.5) / n, len: 1 / n, thickness: 12, x: 1.01, xpad: 4, exponentformat: 'e', nticks: 4,
+        outlinecolor: ink.value, tickcolor: ink.value, tickfont: { color: ink.value, family: 'Courier New, monospace', size: 10 },
+        title: i == 0 ? { text: selectedMode.value == 'i' ? '|I|' : '|V|', font: { color: ink.value, size: 12 } } : undefined
       }
-      , colorscale: 'RdBu', zsmooth: 'best' 
+    }
+  })
+})
+
+// Light curve behind the zoom slider: Stokes I summed over the channels of
+// each band, each band divided by its median so none dominates, averaged
+// across the bands in bins of the digest cadence
+const lightCurve = computed(() => {
+  const keys = bandKeys.value
+  if (!keys.length) return { start: 0, end: 1, times: [] as number[], values: [] as number[] }
+  const ms = (t: string) => Date.parse(t.replace(' ', 'T').replace(/Z?$/, 'Z'))
+  const all = keys.flatMap(k => plotTraces.value[k].img_time.map(ms))
+  const lo = Math.min(...all), hi = Math.max(...all)
+  const first = plotTraces.value[keys[0]].img_time.map(ms)
+  const steps = first.slice(1).map((t, j) => t - first[j]).filter(d => d > 0).sort((a, b) => a - b)
+  const w = Math.max(1, steps[Math.floor(steps.length / 2)] ?? (hi - lo) / 300)
+  const nBins = Math.max(1, Math.min(2000, Math.ceil((hi - lo) / w)))
+  const sum = new Float64Array(nBins), cnt = new Float64Array(nBins)
+  for (const k of keys) {
+    const tr = plotTraces.value[k]
+    const tot = tr.img_time.map((_, j) => tr.stokes_I.reduce((a, ch) => a + (isFinite(ch[j]) ? ch[j] : 0), 0))
+    const sorted = [...tot].sort((a, b) => a - b)
+    const med = Math.abs(sorted[Math.floor(sorted.length / 2)]) || 1
+    tr.img_time.forEach((t, j) => {
+      const b = Math.min(nBins - 1, Math.floor((ms(t) - lo) / w))
+      sum[b] += tot[j] / med; cnt[b]++
     })
-    counter++
   }
-
-  return traces
-
+  return {
+    start: lo, end: hi,
+    times: Array.from({ length: nBins }, (_, b) => lo + (b + 0.5) * w),
+    values: Array.from(sum, (v, b) => cnt[b] ? v / cnt[b] : NaN)
+  }
 })
 
 function updatePlot() {
-  if (fetchDataDisabled.value) return
-  plotlyHTMLElement = Plotly.newPlot(plotlyDivId, plotlyTraces.value, plotlyLayout.value, plotlyConfig.value)
+  if (fetchDataDisabled.value || !bandKeys.value.length) return
+  const el = document.getElementById(plotlyDivId)
+  if (!el || !el.clientWidth) return
+  Plotly.react(el, plotlyTraces.value, plotlyLayout.value, plotlyConfig.value).then(() => {
+    // a double click on the plot resets the zoom
+    ;(el as any).removeAllListeners?.('plotly_relayout')
+    ;(el as any).on?.('plotly_relayout', (e: Record<string, any>) => { if (e['xaxis.autorange']) zoom.value = null })
+  })
 }
+watch(zoom, () => updatePlot())
 
 // function updatePlotData() {
 //   switch (selectedMode.value) {
@@ -275,7 +310,8 @@ watch(() => digestData.value, (newData, _) => {
   if (!newData) return
   plotDataRaw = newData
   plotTraces.value = digestUtils.split_data_freq(plotDataRaw, gammaCorr.value)
-  updatePlot()
+  zoom.value = null
+  nextTick(updatePlot)
 })
 
 watch(() => dataError, (n, _) => {
@@ -363,18 +399,17 @@ onBeforeUnmount(() => {
         </UButton>
       </div>
     </UCard>
-    <div v-if="!fetchDataDisabled || plotDataRaw" class="flex-1 h-full">
-      <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1', base: 'h-full' }, base: 'h-full' }">
-        <div :id="plotlyDivId" class="h-full"></div>
-
-      </UCard>
-    </div>
-    <div v-else>
-      <UCard>
-        <UPageHero title="Please select a date -> a source  to continue" align="center">
-        </UPageHero>
-      </UCard>
-
-    </div>
+    <!-- always in the page, so the resize observer can watch it -->
+    <UCard v-show="bandKeys.length" class="mt-2" :ui="{ body: { padding: 'px-1 py-1 sm:p-2' } }">
+      <div :id="plotlyDivId" :style="{ height: `${plotHeight}px` }"></div>
+      <div v-if="lightCurve.times.length" class="px-2 pb-1 sm:pl-[80px] sm:pr-[90px]">
+        <div class="mb-1 text-xs text-gray-500 dark:text-gray-400">Drag the handles or the window to zoom in time. The line is Stokes I summed over the channels and averaged over the bands.</div>
+        <SpectrogramTimeRangeSlider v-model="zoom" :times="lightCurve.times" :values="lightCurve.values"
+          :start="lightCurve.start" :end="lightCurve.end" />
+      </div>
+    </UCard>
+    <UCard v-if="!bandKeys.length" class="mt-2">
+      <UPageHero title="Select a day and a source to continue" align="center" />
+    </UCard>
   </UDashboardPanelContent>
 </template>
