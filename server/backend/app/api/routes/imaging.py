@@ -1,3 +1,4 @@
+import base64
 from typing import Literal
 from fastapi import APIRouter, HTTPException
 from sqlmodel import select, func, text
@@ -32,6 +33,7 @@ from app.models.epic_data import (
 router = APIRouter()
 from app.core.config import settings
 from app.frb.products import K_DM, load_event
+from app.frb.source_pixel import fetch_source_pixels
 
 # cfreq is stored as real, so match bands on the recovered first channel
 digest_chan0 = (
@@ -217,8 +219,26 @@ async def get_daily_obs_days(session: SessionDep, current_user: UserDep, start: 
 
 @router.get("/spectrogram/", response_model=list[test_epic_pixels])
 async def get_spectrogram(
-    session: SessionDep, current_user: UserDep, specgm_window: SpecgmWindowDep
+    session: SessionDep, current_user: UserDep, specgm_window: SpecgmWindowDep, interpolate: bool = False
 ):
+    """Pixel values of a source over a window: the central pixel of its grid,
+    or with `interpolate` every image interpolated at the source's exact
+    position (Lanczos-2 over the 5x5 grid, as in the FRB analysis)"""
+    if interpolate:
+        src = session.execute(
+            text("select ra_deg, dec_deg from public.epic_watchdog where source = :s order by id desc limit 1"),
+            dict(s=specgm_window.source_name),
+        ).first()
+        times, values = fetch_source_pixels(
+            session, specgm_window.source_name, specgm_window.chan0,
+            specgm_window.start_time.replace(tzinfo=None), specgm_window.end_time.replace(tzinfo=None),
+            float(src[0]) if src else 0.0, float(src[1]) if src else 0.0,
+        )
+        return [
+            test_epic_pixels(img_time=t.astype("datetime64[us]").item(),
+                             pixel_values=base64.b64encode(v.astype("<f4").tobytes()).decode())
+            for t, v in zip(times, values)
+        ]
     stmnt = (
         select(
             epic_pixels.img_time.label("img_time"),

@@ -37,6 +37,11 @@ const nPols = computed(() => props.specgmQuery.n_pols)
 const IMAGE_DT_S = 0.0836
 // kept across windows and sessions, which rebuild this component
 const rfiOn = useState('spectrogram-flag-rfi', () => true)
+// Interpolate at source: every image interpolated at the source's exact
+// position over its 5x5 grid (Lanczos-2, as in the FRB analysis) instead of
+// the central pixel, which jumps each time the grid moves by a pixel. Off by
+// default, since the server reads 25 pixels per image instead of one.
+const interpOn = useState('spectrogram-interpolate', () => false)
 
 // Normalise channels: each channel as its departure from its median over the
 // window in units of its robust scatter (1.4826 MAD), from the samples not
@@ -127,8 +132,9 @@ var plotlyLayout = computed(() => {
   return {
     height: plotHeight.value,
     margin: { t: 45, b: 55, l: 70, r: 20 },
+    // default placement, centred in the top margin: an explicit y and
+    // yanchor put the title below the plot when Plotly redrew the figure
     title: {
-      y: 0.98, yanchor: 'top',
       text: props.specgmQuery.source_name +' - '+ (startChan.value * CHAN_BW_HZ / 1e6 + nChans.value * chanBwHz.value/2/1e6).toFixed(2) + ' MHz | LWA-Sevilleta',
       font: {
         family: 'Courier New, monospace',
@@ -274,11 +280,12 @@ const { pending, data: specgmDataBytes, error: error } = await useLazyAsyncData<
         // session_id: props.specgmQuery.session_id,
         chan0: props.specgmQuery.chan0,
         source_name: props.specgmQuery.source_name,
-        pixel_positions: props.specgmQuery.pixel_positions
+        pixel_positions: props.specgmQuery.pixel_positions,
+        interpolate: interpOn.value ? true : undefined
       }
     })
   , {
-    watch: [() => props.specgmQuery],
+    watch: [() => props.specgmQuery, interpOn],
   }
 )
 
@@ -482,6 +489,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="flex items-center gap-x-6">
           <UCheckbox v-if="frb" v-model="showDispersion" label="Dispersion curve" />
+          <UCheckbox v-model="interpOn" label="Interpolate at source" />
           <UCheckbox v-model="normOn" label="Normalise channels" />
           <div class="flex items-center gap-2">
             <UCheckbox v-model="rfiOn" label="Flag RFI" />
@@ -497,7 +505,11 @@ onBeforeUnmount(() => {
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
       <UProgress v-if="pending || (rfiOn && rfiPending)" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <p v-if="noData && !pending" class="p-4 text-sm text-gray-500 dark:text-gray-400">No images of the source were stored in this window.</p>
-      <div :id="plotlyDivId" ref="plotlyDiv" class="transition-opacity" :class="pending || (rfiOn && rfiPending) ? 'opacity-40' : ''"></div>
+      <!-- dimmed through a wrapper: binding classes on Plotly's own div lets Vue
+           drop the js-plotly-plot class Plotly adds, which stacks its layers -->
+      <div class="transition-opacity" :class="pending || (rfiOn && rfiPending) ? 'opacity-40' : ''">
+        <div :id="plotlyDivId" ref="plotlyDiv"></div>
+      </div>
     
     </UCard>
 

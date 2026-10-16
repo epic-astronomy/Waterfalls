@@ -66,9 +66,16 @@ def interpolation_weights(dx: np.ndarray, dy: np.ndarray) -> np.ndarray:
     return wy[:, :, None] * wx[:, None, :]
 
 
-def fetch_source_stokes_i(session: Session, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int,
-                          ra: float, dec: float):
-    """Stokes I (XX + YY) interpolated at the source, as (times, [n_images, n_chan])"""
+def fetch_source_pixels(session: Session, source: str, chan0: int, t0: datetime, t1: datetime,
+                        ra: float, dec: float):
+    """Every value stored per image (all channels and polarisations)
+    interpolated at the source, as (times, [n_images, n_values]). Used by the
+    FRB analysis (through fetch_source_stokes_i) and by the spectrogram page.
+
+    Lanczos-2 needs four pixels per axis, so it uses the whole 5x5 grid. Its
+    pixels on either side of a grid move are the same physical pixels, which
+    keeps the series continuous; a three-point interpolator on the central
+    3x3 left steps 2 to 9 times larger at the moves on real data."""
     track = None
     times_out, values_out = [], []
     t = t0
@@ -89,15 +96,18 @@ def fetch_source_stokes_i(session: Session, source: str, chan0: int, t0: datetim
         for r in rows:
             index.setdefault(r[0], len(index))
         n = len(index)
-        grid = np.full((n, 5, 5, n_chan), np.nan, dtype=np.float32)
+        n_values = len(rows[0][7]) // 4
+        grid = np.full((n, 5, 5, n_values), np.nan, dtype=np.float32)
         centre = np.full((n, 2), np.nan)
         exact = np.full((n, 2), np.nan)
         for img_time, ox, oy, px, py, sx, sy, values in rows:
             i = index[img_time]
             if not (-2 <= ox <= 2 and -2 <= oy <= 2):
                 continue
-            v = np.frombuffer(bytes(values), dtype="<f4").reshape(n_chan, N_POL)
-            grid[i, oy + 2, ox + 2] = v[:, 0] + v[:, 1]
+            v = np.frombuffer(bytes(values), dtype="<f4")
+            if len(v) != n_values:
+                continue
+            grid[i, oy + 2, ox + 2] = v
             if ox == 0 and oy == 0:
                 centre[i] = (px, py)
                 if sx is not None:
@@ -126,5 +136,15 @@ def fetch_source_stokes_i(session: Session, source: str, chan0: int, t0: datetim
             values_out.append((num.sum(axis=(1, 2)) / den).astype(np.float32))
         times_out.append(times[ok])
     if not times_out:
-        return np.empty(0, dtype="datetime64[us]"), np.empty((0, n_chan))
+        return np.empty(0, dtype="datetime64[us]"), np.empty((0, 0), dtype=np.float32)
     return np.concatenate(times_out), np.concatenate(values_out)
+
+
+def fetch_source_stokes_i(session: Session, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int,
+                          ra: float, dec: float):
+    """Stokes I (XX + YY) interpolated at the source, as (times, [n_images, n_chan])"""
+    times, values = fetch_source_pixels(session, source, chan0, t0, t1, ra, dec)
+    if not len(times):
+        return times, np.empty((0, n_chan))
+    v = values.reshape(len(times), n_chan, N_POL)
+    return times, v[:, :, 0] + v[:, :, 1]
