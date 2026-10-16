@@ -497,7 +497,7 @@ onBeforeUnmount(() => {
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
       <UProgress v-if="pending || (rfiOn && rfiPending)" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <p v-if="noData && !pending" class="p-4 text-sm text-gray-500 dark:text-gray-400">No images of the source were stored in this window.</p>
-      <div :id="plotlyDivId" ref="plotlyDiv" class="transition-opacity" :class="rfiOn && rfiPending ? 'opacity-40' : ''"></div>
+      <div :id="plotlyDivId" ref="plotlyDiv" class="transition-opacity" :class="pending || (rfiOn && rfiPending) ? 'opacity-40' : ''"></div>
     
     </UCard>
 

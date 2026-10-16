@@ -199,20 +199,25 @@ function fetchSpecgm(){
 const route = useRoute()
 const router = useRouter()
 let restoring = false
+// shown in the tabs while a linked address is opened, and if it cannot be
+const linkState = ref<'idle' | 'loading' | 'error'>(route.query.source ? 'loading' : 'idle')
+const linkError = ref('')
 async function restoreFromAddress() {
   const q = route.query
   const id = Number(q.source)
-  if (!id) return
+  if (!id) { linkState.value = 'idle'; return }
   restoring = true
   try {
     watchSource.value = await $fetch<WatchListItem>(rtConfig.public.fastapiBase + `/watchlist/source/${id}`)
+      .catch(() => { throw new Error('The source in this link is no longer on the watch list.') })
     await nextTick()
     if (q.session && q.band != null) {
       const found = await $fetch<ImgSessions>(rtConfig.public.fastapiBase + '/imaging/sessions/', {
         query: { page: 1, nrows: 1, start_time: obsStart.value + 'Z', end_time: obsEnd.value + 'Z',
           source_name: watchSource.value.source, session_id: String(q.session), chan0: Number(q.band) }
       })
-      if (found.data?.[0]) {
+      if (!found.data?.[0]) throw new Error('The session in this link was not found for this source.')
+      {
         if (q.from && q.to) pendingWindow = [String(q.from), String(q.to)]
         imgSession.value = found.data[0]
         await nextTick()
@@ -221,8 +226,11 @@ async function restoreFromAddress() {
       }
     }
     if (q.tab != null) tabIndex.value = Math.max(0, Math.min(2, Number(q.tab) || 0))
-  } catch {
-    // a stale or broken address: start from the watch list
+    linkState.value = 'idle'
+  } catch (e) {
+    // a stale or broken address: say so, and leave the tabs to start over
+    linkError.value = e instanceof Error && e.message.startsWith('The ') ? e.message : 'This link could not be opened.'
+    linkState.value = 'error'
   } finally {
     await nextTick()
     restoring = false
@@ -307,11 +315,16 @@ useSeoMeta({
             </template>
           </SpectrogramSessionList>
         </div>
-        <div v-else="watchSource">
-          <UCard>
+        <div v-else>
+          <UCard v-if="linkState == 'loading'" class="relative mt-2" :ui="{ body: { padding: 'px-4 py-10' } }">
+            <UProgress animation="carousel" size="xs" class="absolute top-0 left-0" />
+            <p class="text-center text-gray-500 dark:text-gray-400">Opening the linked spectrogram</p>
+          </UCard>
+          <UAlert v-else-if="linkState == 'error'" class="mt-2" color="red" variant="soft" icon="i-heroicons-exclamation-triangle"
+            :title="linkError" description="Select a source in the Source tab to start again." />
+          <UCard v-else>
             <UPageHero title="Select a source in the Source tab to list its sessions" />
           </UCard>
-
         </div>
       </template>
 
@@ -345,11 +358,14 @@ useSeoMeta({
             @select="selectSpecgmWindow" @clear="clearSpecgmWindow" />
           <SpectrogramDisplay v-if="specgmQuery" :specgm-query="specgmQuery" :frb="frb"></SpectrogramDisplay>
         </div>
-        <div v-else="imgSession">
-
-
-          <UPageHero title="Select a session in the Session tab to explore its spectrograms" />
-
+        <div v-else>
+          <UCard v-if="linkState == 'loading'" class="relative mt-2" :ui="{ body: { padding: 'px-4 py-10' } }">
+            <UProgress animation="carousel" size="xs" class="absolute top-0 left-0" />
+            <p class="text-center text-gray-500 dark:text-gray-400">Opening the linked spectrogram</p>
+          </UCard>
+          <UAlert v-else-if="linkState == 'error'" class="mt-2" color="red" variant="soft" icon="i-heroicons-exclamation-triangle"
+            :title="linkError" description="Select a source in the Source tab to start again." />
+          <UPageHero v-else title="Select a session in the Session tab to explore its spectrograms" />
         </div>
       </template>
     </UTabs>
