@@ -181,11 +181,11 @@ const tableData = computed(() => {
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }" :columns="columnsTable" @select="rowSelect"
       v-model="selectedRow" v-model:sort="sort" sort-mode="manual"
-      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center' }, td: { base: 'whitespace-nowrap text-center' } }"
+      :ui="{ checkbox: { padding: 'hidden' }, th: { base: 'text-center', padding: 'px-4 py-3' }, td: { base: 'whitespace-nowrap text-center', padding: 'px-4 py-2' } }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No imaging sessions to show.' }">
 
       <template #coverage-data="{ row }">
-        <svg v-if="coverage(row)" class="block h-7 min-w-48 w-full rounded-sm bg-gray-100 dark:bg-gray-800" viewBox="0 0 100 10"
+        <svg v-if="coverage(row)" class="block h-5 min-w-48 w-full rounded-sm bg-gray-100 dark:bg-gray-800" viewBox="0 0 100 10"
           preserveAspectRatio="none" role="img" :aria-label="coverage(row)!.title">
           <title>{{ coverage(row)!.title }}</title>
           <defs>

@@ -30,11 +30,6 @@ const nPols = computed(() => props.specgmQuery.n_pols)
 // const nBufElems = 128 * nPols
 //const sourceName = 'PSR B1133+16'
 
-interface flagChanOptType {
-  id: number,
-  label: string
-}
-const flagChans = ref<flagChanOptType[]>([])
 
 // Automatic RFI flagging with the analysis flagger (lib/rfi.ts, the CHIME/FRB
 // L1 chain), run in a worker once per window and mode and cached, so turning
@@ -72,32 +67,6 @@ function requestRfiMask() {
   rfiWorker.postMessage({ id: rfiRequest, channels: plotDataRaw.map(r => r.slice()), dt: IMAGE_DT_S })
 }
 onBeforeUnmount(() => rfiWorker?.terminate())
-var flagChansOptions = ref<flagChanOptType[]>([])
-watch(()=>props.specgmQuery.start_chan,(n,o)=>{
-  console.log('changed in startchan, nchans')
-  if(n==o && flagChansOptions.value.length!=0) return
-  let opts=[]
-  for (let i = 0; i < props.specgmQuery.n_chan; ++i) {
-    opts.push({
-      id: i,
-      label: (props.specgmQuery.start_chan * CHAN_BW_HZ / 1e6 + i * props.specgmQuery.chan_bw_hz / 1e6).toFixed(3) + ' MHz'
-    })
-  }
-  flagChansOptions.value = opts
-},{ immediate: true })
-
-// computed(() => {
-//   console.log('flag chan options ')
-//   if (!props.specgmQuery) return
-//   let opts = []
-//   for (let i = 0; i < props.specgmQuery.n_chan; ++i) {
-//     opts.push({
-//       id: i,
-//       label: (props.specgmQuery.start_chan * 0.025 + i * props.specgmQuery.chan_bw_hz / 1e6).toFixed(3) + ' MHz'
-//     })
-//   }
-//   return opts
-// })
 
 
 var xx_data = Array<Float32Array>()
@@ -312,10 +281,6 @@ function updatePlot() {
   }
   const rfi = rfiOn.value ? rfiMasks.value[selectedMode.value] : undefined
   if (rfi) plotData.value.forEach((row, c) => { const m = rfi[c]; if (m) for (let t = 0; t < row.length; t++) if (!m[t]) row[t] = NaN })
-  for (const flag of flagChans.value) {
-    console.log('flagging', flag.id, flagChans)
-    if (flag.id >= 0) plotData.value[flag.id] = plotData.value[flag.id].fill(NaN)
-  }
   // plotData=pdata
   // let trace=plotlyTraces.value
   // let trace=[{
@@ -354,16 +319,9 @@ function updatePlot() {
 watch(() => colorMode.value, (n, o) => {
   updatePlot()
 })
-watch(() => flagChans.value, (n, o) => updatePlot())
 watch(() => showDispersion.value, () => updatePlot())
 watch(rfiOn, on => { if (on && !rfiMasks.value[selectedMode.value]) requestRfiMask(); else updatePlot() })
 watch(tz.mode, () => updatePlot())
-watch(()=>props.specgmQuery.session_id,(n,o)=>{
-  if(n!=o){
-    console.log('change in session id')
-    flagChans.value=[]
-  }
-})
 
 watch(() => specgmDataBytes.value, (newData, _) => {
 
@@ -486,19 +444,6 @@ onBeforeUnmount(() => {
             <UIcon v-if="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
             <span v-else-if="rfiOn && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged.toFixed(1) }}% flagged</span>
           </div>
-        </div>
-        <div class="flex justify-center space-x-4 items-center">
-          <span class="text-sm">Flag</span>
-          <USelectMenu v-model="flagChans" :options="flagChansOptions" multiple>
-            <template #label>
-              <template v-if="flagChans.length">
-                <span> {{ flagChans.length }} frequenc{{ flagChans.length > 1 ? 'ies' : 'y' }}</span>
-              </template>
-              <template v-else>
-                <span class="text-gray-500 dark:text-gray-400 truncate">Select frequency</span>
-              </template>
-            </template>
-          </USelectMenu>
         </div>
       </div>
     </UCard>
