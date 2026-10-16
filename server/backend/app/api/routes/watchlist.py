@@ -105,11 +105,20 @@ async def get_all_sources(
     category: Literal["all", "frb", "pulsar", "solar_system", "other"] = "all",
     sort: str | None = None,
     order: Literal["asc", "desc"] = "asc",
+    active_from: datetime | None = None,
+    active_to: datetime | None = None,
 ):
     """The watch list, by default with what is being watched first (manual
     entries such as the Sun, then triggered ones), then the most recently
-    added. A column name in `sort` orders by that column instead."""
+    added. A column name in `sort` orders by that column instead. With
+    `active_from` and `active_to`, only sources watched during that period."""
     cond = true() if category == "all" else (CATEGORY == category)
+    if active_from is not None and active_to is not None:
+        cond = and_(
+            cond,
+            epic_watchdog.t_start < active_to.replace(tzinfo=None),
+            or_(epic_watchdog.t_end.is_(None), epic_watchdog.t_end > active_from.replace(tzinfo=None)),
+        )
     count = session.exec(select(func.count()).select_from(epic_watchdog).where(cond)).one()
 
     if sort in SORTABLE:
@@ -131,6 +140,31 @@ async def get_all_sources(
     rows = session.exec(stmnt).all()
     data = [WatchListRow(**w.model_dump(), category=c, origin=o) for w, c, o in rows]
     return WatchListPage(data=data, count=count)
+
+
+class WatchEvent(BaseModel):
+    time: datetime
+    category: str
+
+
+@router.get("/events/", response_model=list[WatchEvent])
+async def get_watch_events(
+    session: SessionDep,
+    current_user: UserDep,
+    start: datetime,
+    end: datetime,
+    category: Literal["frb", "pulsar"] = "frb",
+):
+    """Trigger times of the sources of one kind added between `start` and
+    `end`, for marking days on a calendar"""
+    stmnt = (
+        select(func.coalesce(epic_watchdog.event_time, epic_watchdog.t_start), CATEGORY)
+        .where(CATEGORY == category)
+        .where(func.coalesce(epic_watchdog.event_time, epic_watchdog.t_start).between(
+            start.replace(tzinfo=None), end.replace(tzinfo=None)))
+        .order_by(func.coalesce(epic_watchdog.event_time, epic_watchdog.t_start))
+    )
+    return [WatchEvent(time=t, category=c) for t, c in session.exec(stmnt).all()]
 
 
 def chime_notify_slack(frb_event:chime_frb_trigger, slack_msg):

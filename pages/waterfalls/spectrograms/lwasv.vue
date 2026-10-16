@@ -54,28 +54,34 @@ const obsEnd = computed(() => {
 
 
 
-const sessionQuery = ref<SessionQuery>()
-const sessionStart = ref('')
-const sessionValidMsg = ref('')
-const sessionEnd = ref('')
+// Source tab: a day on the calendar lists the sources watched that day, and
+// days with a CHIME/FRB trigger are marked
+const rtConfig = useRuntimeConfig()
+const listDay = ref<string | null>(null)
+const markRange = ref<[string, string] | null>(null)
+const { data: frbTimes } = await useLazyAsyncData<{ time: string }[]>('frb-days', () => markRange.value
+  ? $fetch(rtConfig.public.fastapiBase + '/watchlist/events/', {
+    query: { start: tz.dayRange(markRange.value[0])[0] + 'Z', end: tz.dayRange(markRange.value[1])[1] + 'Z', category: 'frb' }
+  })
+  : Promise.resolve([]), { watch: [markRange, tz.mode], default: () => [], server: false })
+const frbDays = computed(() => {
+  const out: Record<string, number> = {}
+  for (const e of frbTimes.value ?? []) { const k = tz.dayKey(e.time); out[k] = (out[k] ?? 0) + 1 }
+  return out
+})
 
+// Session tab: every session of the watch, or those of one day
+const sessionQuery = ref<SessionQuery>()
+const sessionDay = ref<string | null>(null)
+const watchFirstDay = computed(() => tz.dayKey(obsStart.value))
+const watchLastDay = computed(() => tz.dayKey(obsEnd.value))
 
 function fetchSession() {
   if (!watchSource?.value) return
-  sessionQuery.value = { tStart: format(sessionStart.value, "yyyy-MM-dd'T'HH:mm:ss'Z'"), tEnd: format(sessionEnd.value, "yyyy-MM-dd'T'HH:mm:ss'Z'"), sourceName: watchSource.value.source }
+  const [start, end] = sessionDay.value ? tz.dayRange(sessionDay.value) : [obsStart.value, obsEnd.value]
+  sessionQuery.value = { tStart: start + 'Z', tEnd: end + 'Z', sourceName: watchSource.value.source }
 }
-
-const fetchSessionDisabled = computed(() => {
-  let start = new Date(sessionStart.value + 'Z')
-  let end = new Date(sessionEnd.value + 'Z')
-
-  if (start > end) {
-    sessionValidMsg.value = 'Start date cannot be greater than the end date.'
-    return true
-  }
-  sessionValidMsg.value = ''
-  return false
-})
+watch([sessionDay, tz.mode], fetchSession)
 
 const selectedSessionStart=computed(()=>{
   let ret = new Date()
@@ -98,8 +104,6 @@ const selectedSessionEnd=computed(() => {
 const specgmStart=ref('')
 const specgmEnd=ref('')
 const specgmValidMsg = ref('')
-const sessionStartInput = inZone(sessionStart)
-const sessionEndInput = inZone(sessionEnd)
 const specgmStartInput = inZone(specgmStart)
 const specgmEndInput = inZone(specgmEnd)
 // The tabs are the only navigation, so the defaults the Next buttons used to
@@ -111,9 +115,11 @@ watch(watchSource, (src) => {
   if (!src) return
   imgSession.value = undefined
   specgmQuery.value = undefined
-  sessionStart.value = obsStart.value
-  sessionEnd.value = obsEnd.value
-  fetchSession()
+  // the day picked on the Source tab carries over, if the source was watched then
+  const day = !isFrb.value && listDay.value && listDay.value >= watchFirstDay.value && listDay.value <= watchLastDay.value
+    ? listDay.value : null
+  if (sessionDay.value != day) sessionDay.value = day // fetches through the watcher
+  else fetchSession()
   tabIndex.value = 1
 })
 
@@ -196,35 +202,27 @@ useSeoMeta({
         </div>
       </template>
       <template #srcSelection>
-        <SpectrogramWatchList v-model="watchSource" class="mt-2" />
+        <div class="mt-2 flex flex-col lg:flex-row gap-2 items-start">
+          <UCard class="w-full lg:w-auto shrink-0" :ui="{ body: { padding: 'p-3' } }">
+            <SpectrogramCalendar v-model="listDay" :marks="frbDays" @range="(a, b) => markRange = [a, b]">
+              <template #legend>
+                <span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />CHIME/FRB event</span>
+              </template>
+            </SpectrogramCalendar>
+          </UCard>
+          <SpectrogramWatchList v-model="watchSource" :day="listDay" class="flex-1 min-w-0" />
+        </div>
       </template>
 
       <template #sessionSelection>
         <div v-if="watchSource" class="mt-2">
-          <UCard v-if="!isFrb" :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
-            <div class="flex flex-wrap justify-evenly items-center">
-
-              <div class="flex flex-wrap justify-center items-center gap-2">
-                <span class="text-md">Start time ({{ tz.zoneName(sessionStart || undefined) }})</span>
-                <UInput type="datetime-local" v-model="sessionStartInput" step=1 :min="tz.toInput(obsStart)" :max="tz.toInput(obsEnd)"></UInput>
-              </div>
-
-              <div class="flex flex-wrap justify-center items-center gap-2">
-                <span class="text-md">End time ({{ tz.zoneName(sessionEnd || undefined) }})</span>
-                <UInput type="datetime-local" v-model="sessionEndInput" step=1 :min="tz.toInput(obsStart)" :max="tz.toInput(obsEnd)"></UInput>
-              </div>
-
-
-              <UButton :ui="{ rounded: 'rounded-md' }" variant="outline" label="Show Sessions" @click="fetchSession"
-                :disabled="fetchSessionDisabled">
-              </UButton>
-            </div>
-            <div v-if="sessionValidMsg" class="flex flex-wrap justify-center p-1">
-              <UAlert :title="sessionValidMsg" color="red" icon="i-heroicons-exclamation-circle" variant="soft">
-              </UAlert>
-            </div>
-          </UCard>
-          <SpectrogramSessionList  :session-query="sessionQuery" v-model="imgSession" />
+          <div class="flex flex-col lg:flex-row gap-2 items-start">
+            <!-- FRB watches last hours, so their sessions are always listed in full -->
+            <UCard v-if="!isFrb" class="w-full lg:w-auto shrink-0" :ui="{ body: { padding: 'p-3' } }">
+              <SpectrogramCalendar v-model="sessionDay" :min="watchFirstDay" :max="watchLastDay" />
+            </UCard>
+            <SpectrogramSessionList :session-query="sessionQuery" v-model="imgSession" class="flex-1 min-w-0" />
+          </div>
         </div>
         <div v-else="watchSource">
           <UCard>

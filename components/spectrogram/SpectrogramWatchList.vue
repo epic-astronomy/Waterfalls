@@ -8,6 +8,9 @@ const watchSource = defineModel({
   type: Object as PropType<WatchListItem>,
   required: false
 })
+// a calendar day in the chosen time zone; only sources watched that day are listed
+const props = defineProps({ day: { type: String as PropType<string | null>, default: null } })
+const dayRange = computed(() => props.day ? tz.dayRange(props.day) : null)
 
 const columns = [{
   key: 'source',
@@ -94,14 +97,16 @@ const { pending, data: watchlist, error: error } = await useLazyAsyncData<WatchL
       nrows: rowsPerPage.value,
       category: category.value,
       sort: sort.value.column || undefined,
-      order: sort.value.direction
+      order: sort.value.direction,
+      active_from: dayRange.value ? dayRange.value[0] + 'Z' : undefined,
+      active_to: dayRange.value ? dayRange.value[1] + 'Z' : undefined
     }
   }), {
-  watch: [page, rowsPerPage, category, sort],
+  watch: [page, rowsPerPage, category, sort, dayRange],
   default: () => defaultWatchList
 })
 
-watch([rowsPerPage, category, sort], () => { page.value = 1 })
+watch([rowsPerPage, category, sort, dayRange], () => { page.value = 1 })
 
 watch(error, (newError) => {
   if (newError) {

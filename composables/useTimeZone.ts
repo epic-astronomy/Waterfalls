@@ -12,6 +12,12 @@ function toMs(t: string | number | Date) {
   return Date.parse(iso + 'Z')
 }
 
+// Calendar arithmetic on day keys, independent of any time zone
+export function addDays(key: string, n: number) {
+  const [y, m, d] = key.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
+
 export function useTimeZone() {
   const mode = useState<TimeZoneMode>('time-zone', () => 'utc')
   const local = computed(() => mode.value == 'local')
@@ -25,8 +31,19 @@ export function useTimeZone() {
     return parts.find(p => p.type == 'timeZoneName')?.value ?? 'local'
   }
 
+  // calendar days ("2026-10-14") in the chosen zone
+  const dayKey = (t: string | number | Date) => wall(toMs(t)).slice(0, 10)
+  const fromInput = (v: string) => {
+    if (!v) return ''
+    const ms = local.value ? new Date(v).getTime() : toMs(v)
+    return new Date(ms).toISOString().slice(0, 19)
+  }
+
   return {
     mode,
+    dayKey,
+    // the UTC start and end of a calendar day in the chosen zone
+    dayRange: (key: string) => [fromInput(`${key}T00:00:00`), fromInput(`${addDays(key, 1)}T00:00:00`)] as const,
     local,
     zoneName,
     setMode(m: TimeZoneMode) {
@@ -44,10 +61,6 @@ export function useTimeZone() {
     plotTime: (t: string | number | Date) => wall(toMs(t)).replace('T', ' '),
     // a datetime-local input value from an API time, and back
     toInput: (t: string) => (t ? wall(toMs(t)).slice(0, 19) : ''),
-    fromInput: (v: string) => {
-      if (!v) return ''
-      const ms = local.value ? new Date(v).getTime() : toMs(v)
-      return new Date(ms).toISOString().slice(0, 19)
-    }
+    fromInput
   }
 }
