@@ -30,6 +30,9 @@ const links = [{
   }, {
     label: 'FRB events',
     to: '/waterfalls/spectrograms/frb'
+  }, {
+    label: 'All-sky monitor',
+    to: '/waterfalls/spectrograms/skymon'
   }
     // ,{
     //   label:'Plotly test',

@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     FRB_GEOMETRY_DIR: str = "/FileStore/epicT/epic/LWA_EPIC/src/python"
     FRB_GRID_SIZE: int = 128
     FRB_GRID_RES: float = 1.056
+    # all-sky monitors on the imaging workers (LWA_EPIC src/python/skymon),
+    # name=url pairs; a monitor that does not answer only removes its band
+    SKYMON_NODES: str = ",".join(f"epic{i}=http://epic{i}:8095" for i in range(1, 7))
+    SKYMON_TIMEOUT_S: float = 2.0
+    SKYMON_PIXEL_TIMEOUT_S: float = 10.0
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)

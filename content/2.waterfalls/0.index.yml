@@ -19,3 +19,7 @@ cards:
   - title: Daily Digest
     description: Explore the long-integration spectrograms for all monitored sources.
     to: /waterfalls/spectrograms/dailydigest
+
+  - title: All-sky monitor
+    description: Real-time search of the whole visible sky for dispersed bursts in every imaging band, and the spectrogram of any position.
+    to: /waterfalls/spectrograms/skymon
