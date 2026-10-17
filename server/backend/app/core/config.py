@@ -100,7 +100,14 @@ class Settings(BaseSettings):
     # all-sky monitors on the imaging workers (LWA_EPIC src/python/skymon),
     # name=url pairs; a monitor that does not answer only removes its band
     SKYMON_NODES: str = ",".join(f"epic{i}=http://epic{i}:8095" for i in range(1, 7))
+    # the combiner runs on one worker at a time; whichever answers is used
+    SKYMON_COMBINER_URLS: str = ",".join(f"http://epic{i}:8096" for i in range(1, 7))
     SKYMON_TIMEOUT_S: float = 2.0
+    # review verdicts: sent to the combiner with this token (its SKYMON_TOKEN),
+    # only for a valid Hanko session, and only from these e-mail addresses if set
+    SKYMON_TOKEN: str = Field('', validate_default=False)
+    SKYMON_REVIEWERS: str = Field('', validate_default=False)
+    NUXT_PUBLIC_HANKO_API_URL: str = Field('', validate_default=False)
     SKYMON_PIXEL_TIMEOUT_S: float = 10.0
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)

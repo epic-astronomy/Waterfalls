@@ -31,6 +31,77 @@ async function loadNodes() {
   finally { nodesPending.value = false }
 }
 
+// events of the combiner: candidates checked in every band that could see them
+interface BandState {
+  state?: string, f_lo?: number, f_hi?: number, el_at_arrival?: number, predicted_t_bottom?: number,
+  reason?: string, candidate?: { snr: number, dm: number }, followup?: { snr: number, dm: number }
+}
+interface Ev {
+  id: string, kind: string, status: string, ra: number, dec: number, dm: number, dm_err: number,
+  t_inf: number, combined_snr: number | null, best_snr?: number | null, seen?: string[], could_see?: string[],
+  bands: Record<string, BandState & { data_id?: string }>,
+  spectrum?: { plausible: boolean | null, consistent_with?: string[] },
+  review?: string, reviews?: { verdict: string, by: string, note: string, at: number }[]
+}
+const events = ref<Ev[]>([])
+const combinerUp = ref<boolean | null>(null)
+const eventsPending = ref(false)
+const showInjEvents = ref(false)
+const showUnconfirmable = ref(false)
+async function loadEvents() {
+  eventsPending.value = true
+  try {
+    const r = await $fetch<{ up: boolean, events: Ev[] }>(rtConfig.public.fastapiBase + '/skymon/events', { query: { since_h: sinceH.value } })
+    combinerUp.value = r.up
+    events.value = r.events
+  } catch { combinerUp.value = false; events.value = [] }
+  finally { eventsPending.value = false }
+}
+const shownEvents = computed(() => events.value.filter(e =>
+  (showInjEvents.value || e.kind != 'injection') && (showUnconfirmable.value || e.status != 'unconfirmable') &&
+  (showReviewed.value || e.review == 'pending')))
+const evLabel: Record<string, string> = {
+  pending: 'Pending', confirmed: 'Confirmed', band_limited: 'One band, plausible spectrum',
+  implausible: 'One band, implausible spectrum', unconfirmable: 'Not checkable', single_band: 'One band'
+}
+const evColor: Record<string, string> = {
+  pending: 'sky', confirmed: 'green', band_limited: 'amber', implausible: 'gray', unconfirmable: 'gray', single_band: 'amber'
+}
+const reviewLabel: Record<string, string> = { pending: 'To review', frb: 'FRB', rfi: 'RFI', unclear: 'Unclear', 'not needed': '' }
+const showReviewed = ref(true)
+
+// review verdicts, for logged-in users; the server checks the session with Hanko
+const hanko = useHanko()
+const canReview = ref(false)
+const reviewNote = ref('')
+const reviewMsg = ref('')
+async function submitReview(e: Ev, verdict: string) {
+  reviewMsg.value = ''
+  try {
+    const r = await $fetch<{ review: string, reviews: Ev['reviews'] }>(
+      rtConfig.public.fastapiBase + `/skymon/events/${encodeURIComponent(e.id)}/review`,
+      { method: 'POST', body: { verdict, note: reviewNote.value } })
+    e.review = r.review
+    e.reviews = r.reviews
+    reviewNote.value = ''
+    reviewMsg.value = 'Saved.'
+  } catch (err: any) {
+    reviewMsg.value = err?.data?.detail ?? 'The review could not be saved.'
+  }
+}
+const bandLabel: Record<string, string> = {
+  detected: 'detected', followup: 'measured', watching: 'watching', not_visible: 'not visible',
+  node_down: 'not answering', searched: 'searched'
+}
+function bandText(name: string, b: BandState) {
+  const v = b.candidate?.snr ?? b.followup?.snr
+  return `${name} ${bandLabel[b.state ?? ''] ?? b.state ?? ''}${v != null ? ' ' + v.toFixed(1) : ''}`
+}
+function showEvent(e: Ev) {
+  showCandidate({ ra: e.ra, dec: e.dec, t_inf: e.t_inf, dm: e.dm } as Cand)
+}
+const expanded = ref<string | null>(null)
+
 const sinceH = ref(Number(route.query.since_h) || 24)
 const showInjections = ref(route.query.inj == '1')
 const showRfi = ref(false)
@@ -83,7 +154,7 @@ watch([ra, dec, hours, sinceH, showInjections], () => {
   if (showInjections.value) q.inj = '1'
   router.replace({ query: q })
 })
-watch(sinceH, loadCands)
+watch(sinceH, () => { loadCands(); loadEvents() })
 
 const pct = (x?: number | null) => x == null ? '' : `${Math.round(100 * x)}%`
 const fmt = (x?: number | null, d = 1) => x == null ? '' : x.toFixed(d)
@@ -94,9 +165,11 @@ const clsColor: Record<string, string> = { candidate: 'amber', injection: 'sky',
 let timer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   tz.restore()
+  try { canReview.value = !!hanko?.session.isValid() } catch { canReview.value = false }
   loadNodes()
   loadCands()
-  timer = setInterval(() => { loadNodes(); loadCands() }, 60000)
+  loadEvents()
+  timer = setInterval(() => { loadNodes(); loadCands(); loadEvents() }, 60000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 
@@ -150,6 +223,80 @@ useSeoMeta({
               <td class="px-2 py-1 text-right">{{ n.injections?.injected ? `${n.injections.recovered} of ${n.injections.recovered + n.injections.missed}` : '' }}</td>
             </tr>
             <tr v-if="!nodes.length && !nodesPending"><td colspan="10" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </UCard>
+
+    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
+      <template #header>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="font-medium">Events across bands</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">each candidate checked in every band that could see it</span>
+          <UCheckbox v-model="showInjEvents" label="Test injections" />
+          <UCheckbox v-model="showUnconfirmable" label="Not checkable" />
+          <UCheckbox v-model="showReviewed" label="Already reviewed" />
+          <div class="flex-1" />
+          <UBadge v-if="combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
+          <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="eventsPending" @click="loadEvents" />
+        </div>
+      </template>
+      <div class="overflow-x-auto max-h-96">
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900">
+            <tr>
+              <th class="px-2 py-1">Arrival at infinite frequency ({{ tz.zoneName() }})</th><th class="px-2 py-1">Result</th>
+              <th class="px-2 py-1 text-right">DM (pc cm⁻³)</th><th class="px-2 py-1 text-right">Combined S/N</th>
+              <th class="px-2 py-1 text-right">RA (°)</th><th class="px-2 py-1 text-right">Dec (°)</th>
+              <th class="px-2 py-1">Bands</th><th class="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="e in shownEvents" :key="e.id">
+              <tr class="border-t border-gray-200 dark:border-gray-800 cursor-pointer" @click="expanded = expanded == e.id ? null : e.id">
+                <td class="px-2 py-1 font-mono">{{ tz.dateTime(e.t_inf * 1000) }}</td>
+                <td class="px-2 py-1">
+                  <UBadge :color="evColor[e.status]" variant="subtle" size="xs" :label="evLabel[e.status] ?? e.status" />
+                  <UBadge v-if="e.kind == 'injection'" color="sky" variant="outline" size="xs" label="Test injection" class="ml-1" />
+                  <UBadge v-if="reviewLabel[e.review ?? '']" :color="e.review == 'pending' ? 'orange' : 'gray'" variant="outline" size="xs"
+                    :label="reviewLabel[e.review ?? '']" class="ml-1" />
+                </td>
+                <td class="px-2 py-1 text-right">{{ e.dm.toFixed(1) }} ± {{ e.dm_err.toFixed(1) }}</td>
+                <td class="px-2 py-1 text-right">{{ e.combined_snr != null ? e.combined_snr.toFixed(1) : '' }}</td>
+                <td class="px-2 py-1 text-right">{{ e.ra.toFixed(2) }}</td>
+                <td class="px-2 py-1 text-right">{{ e.dec.toFixed(2) }}</td>
+                <td class="px-2 py-1">{{ e.seen?.length ? `seen in ${e.seen.length} of ${e.could_see?.length ?? 0}` : '' }}</td>
+                <td class="px-2 py-1"><UButton size="2xs" variant="outline" label="Spectrogram" @click.stop="showEvent(e)" /></td>
+              </tr>
+              <tr v-if="expanded == e.id" class="bg-gray-50 dark:bg-gray-800/50">
+                <td colspan="8" class="px-4 py-2 space-y-2">
+                  <div class="flex flex-wrap gap-2">
+                    <UBadge v-for="(b, name) in e.bands" :key="name" size="xs" variant="soft"
+                      :color="b.state == 'detected' || (b.state == 'followup' && (b.followup?.snr ?? 0) >= 6) ? 'green' : b.state == 'watching' ? 'sky' : 'gray'"
+                      :label="bandText(String(name), b) + (b.state == 'detected' || b.data_id ? ', data kept' : '')" />
+                  </div>
+                  <p v-if="e.spectrum?.consistent_with?.length" class="text-xs text-gray-600 dark:text-gray-300">
+                    The S/N measured in the bands is consistent with {{ e.spectrum.consistent_with.join(', or with ') }}.
+                  </p>
+                  <div v-if="e.reviews?.length" class="text-xs text-gray-600 dark:text-gray-300">
+                    <div v-for="(r, i) in e.reviews" :key="i">
+                      {{ tz.dateTime(r.at * 1000) }}, {{ r.by }} reviewed it as {{ reviewLabel[r.verdict] }}<template v-if="r.note">. {{ r.note }}</template>
+                    </div>
+                  </div>
+                  <div v-if="e.kind == 'sky' && e.status != 'pending'" class="flex flex-wrap items-center gap-2">
+                    <template v-if="canReview">
+                      <UInput v-model="reviewNote" size="xs" placeholder="Note (optional)" class="w-72" @click.stop />
+                      <UButton size="2xs" color="green" variant="soft" label="FRB" @click.stop="submitReview(e, 'frb')" />
+                      <UButton size="2xs" color="red" variant="soft" label="RFI" @click.stop="submitReview(e, 'rfi')" />
+                      <UButton size="2xs" color="gray" variant="soft" label="Unclear" @click.stop="submitReview(e, 'unclear')" />
+                      <span v-if="reviewMsg" class="text-xs text-gray-500">{{ reviewMsg }}</span>
+                    </template>
+                    <span v-else class="text-xs text-gray-500">Log in to review this event.</span>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <tr v-if="!shownEvents.length && !eventsPending"><td colspan="8" class="px-2 py-3 text-center text-gray-500">No events in this period.</td></tr>
           </tbody>
         </table>
       </div>

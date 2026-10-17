@@ -19,7 +19,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app.core.config import settings
 
@@ -161,3 +161,99 @@ def pixel(ra: float = Query(..., ge=0, lt=360), dec: float = Query(..., ge=-90, 
         out.append(r)
     out.sort(key=lambda d: d["freqs_mhz"][0] if d.get("freqs_mhz") else 1e9)
     return out
+
+
+def _combiner(path: str):
+    """Ask every possible combiner location at once; the first answer wins"""
+    urls = [u.strip().rstrip("/") for u in settings.SKYMON_COMBINER_URLS.split(",") if u.strip()]
+    futs = [_pool.submit(_get, u + path, settings.SKYMON_TIMEOUT_S) for u in urls]
+    for f in futs:
+        try:
+            return f.result(timeout=settings.SKYMON_TIMEOUT_S + 1)
+        except Exception:
+            continue
+    return None
+
+
+@router.get("/events")
+def events(since_h: float = Query(24.0, ge=0, le=24 * 30),
+           status: str | None = Query(None, pattern="^(pending|confirmed|single_band|unconfirmable)$"),
+           limit: int = Query(200, ge=1, le=2000)):
+    """Events of the combiner: candidates checked across bands. null if no combiner answers"""
+    q = urllib.parse.urlencode({k: v for k, v in dict(since=time.time() - since_h * 3600,
+                                                     status=status, limit=limit).items()
+                                if v is not None})
+    res = _combiner(f"/api/events?{q}")
+    if res is None:
+        return dict(up=False, events=[])
+    for e in res:  # monitor addresses and watch ids stay on the server
+        for b in e.get("bands", {}).values():
+            for k in ("watch_id", "watch_key", "error"):
+                b.pop(k, None)
+    return dict(up=True, events=res)
+
+
+@router.get("/combiner")
+def combiner_status():
+    st = _combiner("/api/status")
+    return dict(up=st is not None, **(st or {}))
+
+
+def _hanko_user(request: Request) -> dict:
+    """
+    The logged-in user, checked with the Hanko API itself: the session token
+    from the hanko cookie (sent with every request to this origin) or the
+    Authorization header is passed to GET /me, which only answers for a valid
+    session. Raises 401 otherwise.
+    """
+    api = settings.NUXT_PUBLIC_HANKO_API_URL.rstrip("/")
+    token = request.cookies.get("hanko") or \
+        request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not api or not token:
+        raise HTTPException(status_code=401, detail="log in to review")
+    hdr = {"Authorization": f"Bearer {token}"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"{api}/me", headers=hdr),
+                                    timeout=5) as r:
+            uid = json.loads(r.read())["id"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="log in to review")
+    email = ""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"{api}/users/{uid}", headers=hdr),
+                                    timeout=5) as r:
+            u = json.loads(r.read())
+        email = next((e["address"] for e in u.get("emails", []) if e.get("is_primary")),
+                     (u.get("emails") or [{}])[0].get("address", ""))
+    except Exception:
+        pass
+    allowed = [x.strip().lower() for x in settings.SKYMON_REVIEWERS.split(",") if x.strip()]
+    if allowed and email.lower() not in allowed:
+        raise HTTPException(status_code=403, detail="not a reviewer")
+    return dict(id=uid, email=email)
+
+
+@router.post("/events/{eid}/review")
+def review(eid: str, request: Request, verdict: str = Body(..., pattern="^(frb|rfi|unclear)$"),
+           note: str = Body("", max_length=2000)):
+    """Record a logged-in reviewer's verdict on a combiner event"""
+    user = _hanko_user(request)
+    body = json.dumps(dict(verdict=verdict, note=note,
+                           by=user["email"] or user["id"])).encode()
+    hdr = {"Content-Type": "application/json"}
+    if settings.SKYMON_TOKEN:
+        hdr["X-Skymon-Token"] = settings.SKYMON_TOKEN
+    urls = [u.strip().rstrip("/") for u in settings.SKYMON_COMBINER_URLS.split(",") if u.strip()]
+    for u in urls:
+        try:
+            req = urllib.request.Request(f"{u}/api/events/{urllib.parse.quote(eid)}/review",
+                                         data=body, headers=hdr, method="POST")
+            with urllib.request.urlopen(req, timeout=settings.SKYMON_TIMEOUT_S) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue  # another combiner location, or an unknown event
+            raise HTTPException(status_code=e.code, detail="the combiner refused the review")
+        except Exception:
+            continue
+    raise HTTPException(status_code=503, detail="the combiner did not answer")
