@@ -287,6 +287,7 @@ const tableData = computed(() => {
             <span class="font-medium">{{ pageTotal }}</span>
             sessions
           </span>
+          <SpectrogramNodesMissingNote :flags="imgSession" class="mt-1" />
         </div>
 
         <UPagination :ui="{

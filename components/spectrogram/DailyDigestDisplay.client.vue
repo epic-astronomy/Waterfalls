@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { anyMissing, flagsFromHeaders, type NodeFlags } from '~/lib/nodes'
 import { format } from 'date-fns';
 import type { DailyDigestSrc, DailyDigestSrcConfig, DailyDigestData, DailyDigestResp, DailyDigestTraceData } from '~/types';
 import * as digestUtils from '~/lib/dailydigest'
@@ -32,13 +33,16 @@ const sourceNames = ref<String[]>([])
 //////////////////////////////////
 //Begin:  Source fetching based on date
 //////////////////////////////////
+// bands whose imaging nodes did not answer, for the day's sources and for the digest
+const srcFlags = ref<NodeFlags | null>(null)
 const { pending, data: digestSrcs, error: error } = await useLazyAsyncData<DailyDigestSrc[]>(
   'dailysrcfetch',
   () => digestDay.value ? $fetch(rtConfig.public.fastapiBase + '/imaging/dailyobs/',
     {
       query: {
         day: digestDay.value
-      }
+      },
+      onResponse({ response }) { srcFlags.value = flagsFromHeaders(response.headers) }
     }) : Promise.resolve([])
   , {
     watch: [digestDay],
@@ -546,6 +550,7 @@ onBeforeUnmount(() => {
         <div :id="plotlyDivId" :style="{ height: `${plotHeight}px` }"></div>
       </div>
     </UCard>
+    <SpectrogramNodesMissingNote :flags="anyMissing(digestData) ? digestData : srcFlags" class="px-2 pt-2" />
     <UCard v-if="!bandKeys.length">
       <UPageHero title="Select a day and a source to continue" align="center" />
     </UCard>

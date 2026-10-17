@@ -1,10 +1,13 @@
 <script lang="ts">
 import { ringCache } from '~/lib/ringCache'
+import { anyMissing, flagsFromHeaders, type NodeFlags } from '~/lib/nodes'
 import type { SpecgmData } from '~/types'
 // Recent windows, raw and interpolated, kept across windows and sessions
 // (which rebuild this component), so toggling Interpolate at source or
 // returning to a window does not fetch it again. Eight slots of about 3 MB.
-const spectrogramCache = ringCache<SpecgmData[]>(8)
+// Each keeps the bands whose nodes did not answer; a window missing some is
+// fetched again next time.
+const spectrogramCache = ringCache<{ rows: SpecgmData[], flags: NodeFlags }>(8, v => !anyMissing(v.flags))
 </script>
 
 <script setup lang="ts">
@@ -279,6 +282,7 @@ const displayModes = [{
 // }
 const selectedMode = ref('xx_yy')
 
+const specFlags = ref<NodeFlags | null>(null)
 const { pending, data: specgmDataBytes, error: error } = await useLazyAsyncData<SpecgmData[]>(
   'specfetch',
   () => {
@@ -291,7 +295,9 @@ const { pending, data: specgmDataBytes, error: error } = await useLazyAsyncData<
       interpolate: interpOn.value ? true : undefined
     }
     return spectrogramCache(JSON.stringify(query),
-      () => $fetch<SpecgmData[]>(rtConfig.public.fastapiBase + '/imaging/spectrogram/', { query }))
+      () => $fetch.raw<SpecgmData[]>(rtConfig.public.fastapiBase + '/imaging/spectrogram/', { query })
+        .then(r => ({ rows: r._data ?? [], flags: flagsFromHeaders(r.headers) })))
+      .then(v => { specFlags.value = v.flags; return v.rows })
   }
   , {
     watch: [() => props.specgmQuery, interpOn],
@@ -513,7 +519,8 @@ onBeforeUnmount(() => {
 
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
       <UProgress v-if="pending || (rfiOn && rfiPending)" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
-      <p v-if="noData && !pending" class="p-4 text-sm text-gray-500 dark:text-gray-400">No images of the source were stored in this window.</p>
+      <SpectrogramNodesMissingNote v-if="!pending" :flags="specFlags" class="px-4 pt-3" />
+      <p v-if="noData && !pending && !anyMissing(specFlags)" class="p-4 text-sm text-gray-500 dark:text-gray-400">No images of the source were stored in this window.</p>
       <!-- dimmed through a wrapper: binding classes on Plotly's own div lets Vue
            drop the js-plotly-plot class Plotly adds, which stacks its layers -->
       <div class="transition-opacity" :class="pending || (rfiOn && rfiPending) ? 'opacity-40' : ''">

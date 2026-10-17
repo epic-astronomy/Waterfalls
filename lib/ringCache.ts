@@ -1,8 +1,8 @@
 // A small cache of recent requests in a fixed ring of slots: a new entry
 // overwrites the oldest, so memory stays bounded. Entries are promises, so a
-// request still in flight is shared rather than sent twice; failures are
-// dropped so they can be retried.
-export function ringCache<T>(slots: number) {
+// request still in flight is shared rather than sent twice; failures, and
+// results that `keep` rejects, are dropped so they can be retried.
+export function ringCache<T>(slots: number, keep: (value: T) => boolean = () => true) {
   const keys: (string | null)[] = new Array(slots).fill(null)
   const values: Promise<T>[] = new Array(slots)
   let next = 0
@@ -14,7 +14,8 @@ export function ringCache<T>(slots: number) {
     const p = load()
     keys[slot] = key
     values[slot] = p
-    p.catch(() => { if (keys[slot] === key) keys[slot] = null })
+    p.then(v => { if (!keep(v) && keys[slot] === key) keys[slot] = null },
+      () => { if (keys[slot] === key) keys[slot] = null })
     return p
   }
 }

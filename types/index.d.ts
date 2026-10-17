@@ -1,3 +1,5 @@
+import type { NodeFlags } from '~/lib/nodes'
+
 export type WatchStatus = 'watching' | 'watched'
 
 export interface WatchListItem{
@@ -19,7 +21,7 @@ export interface WatchListItem{
   origin?: 'manual' | 'chime'
 }
 
-export interface WatchList{
+export interface WatchList extends NodeFlags{
   data: WatchListItem[],
   count: number
 }
@@ -35,7 +37,7 @@ export interface ImgSessionItem {
   int_time: number
 }
 
-export interface ImgSessions{
+export interface ImgSessions extends NodeFlags{
   data: ImgSessionItem[],
   count: number
 }
@@ -94,7 +96,7 @@ export interface DailyDigestStats{
   count: number
 }
 
-export interface DailyDigestResp{
+export interface DailyDigestResp extends NodeFlags{
   stats: DailyDigestStats[],
   data: DailyDigestData[]
 }

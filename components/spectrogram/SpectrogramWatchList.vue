@@ -220,6 +220,7 @@ const tableData = computed(() => {
             <span class="font-medium">{{ pageTotal }}</span>
             sources
           </span>
+          <SpectrogramNodesMissingNote :flags="watchlist" class="mt-1" />
         </div>
 
         <UPagination :ui="{
