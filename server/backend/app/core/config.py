@@ -88,10 +88,12 @@ class Settings(BaseSettings):
     EPIC_NODES: Annotated[list[str] | str, BeforeValidator(parse_list)] = [
         f"epic{i}=192.168.40.{20 + i}" for i in range(1, 7)
     ]
-    EPIC_NODE_PORT: int = 5432
+    # the per-node imager databases (cluster 16/epic, playbook 26); 5432 is the
+    # old Citus worker and 5433 the all-sky monitor's database
+    EPIC_NODE_PORT: int = 5434
     EPIC_NODE_DB: str = "epic"
     # read-only role on the node databases; blank falls back to POSTGRES_USER
-    EPIC_NODE_USER: str = ""
+    EPIC_NODE_USER: str = "epic_reader"
     EPIC_NODE_PASSWORD: str = ""
     EPIC_NODE_CONNECT_TIMEOUT_S: int = 3
     EPIC_NODE_STATEMENT_TIMEOUT_MS: int = 20000
