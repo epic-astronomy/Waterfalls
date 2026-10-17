@@ -1,4 +1,5 @@
 from typing import Annotated, Any, Literal, List
+import json
 import secrets
 import warnings
 
@@ -23,6 +24,15 @@ def parse_cors(v: Any) -> list[str] | str:
         return [i.strip() for i in v.split(",")]
     elif isinstance(v, list | str):
         return v
+    raise ValueError(v)
+
+
+def parse_list(v: Any) -> list[str]:
+    """A list from a JSON list or a comma-separated string"""
+    if isinstance(v, str):
+        v = json.loads(v) if v.strip().startswith("[") else [i for i in v.split(",")]
+    if isinstance(v, list):
+        return [str(i).strip() for i in v if str(i).strip()]
     raise ValueError(v)
 
 
@@ -69,6 +79,32 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field('', validate_default=False)
     POSTGRES_DB: str = Field('',validate_default=False)
     EPIC_DATA_SCHEMA: str = Field('epic',validate_default=False)
+    # Per-node imaging databases. Each worker's imager writes the pixels,
+    # sessions and digest of its band to a PostgreSQL on its own disk, in
+    # tables of EPIC_DATA_SCHEMA; the database above keeps the global tables
+    # (watch list, FRB analysis). Entries are name=host or name=host:port, as
+    # a JSON list or comma separated. The default is the 40 Gb data network;
+    # the 1 Gb internal network (169.254.128.11-16) also reaches the workers.
+    EPIC_NODES: Annotated[list[str] | str, BeforeValidator(parse_list)] = [
+        f"epic{i}=192.168.40.{20 + i}" for i in range(1, 7)
+    ]
+    EPIC_NODE_PORT: int = 5432
+    EPIC_NODE_DB: str = "epic"
+    # read-only role on the node databases; blank falls back to POSTGRES_USER
+    EPIC_NODE_USER: str = ""
+    EPIC_NODE_PASSWORD: str = ""
+    EPIC_NODE_CONNECT_TIMEOUT_S: int = 3
+    EPIC_NODE_STATEMENT_TIMEOUT_MS: int = 20000
+    # a node that has not answered in this time drops out of the response
+    EPIC_NODE_QUERY_TIMEOUT_S: float = 25.0
+    # a node that refused a connection is skipped for this long
+    EPIC_NODE_RETRY_S: float = 30.0
+    # which nodes hold which band (chan0) is read from the session tables and
+    # kept this long; "chan0=node" entries fix it instead
+    EPIC_NODE_BANDS: Annotated[list[str] | str, BeforeValidator(parse_list)] = []
+    EPIC_NODE_BANDS_CACHE_S: float = 300.0
+    # the FRB analysis reads long windows of pixels from the nodes
+    FRB_NODE_STATEMENT_TIMEOUT_MS: int = 600000
     # matches the cadence of the long integrations behind the daily digest
     MAX_SPECTROGRAM_PERIOD_S: int = 180
     # CHIME/FRB watches last until the burst has crossed the lowest imaged

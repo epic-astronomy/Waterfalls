@@ -1,6 +1,6 @@
 import base64
 from typing import Literal
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from sqlmodel import select, func, text
 
 from sqlalchemy.dialects.postgresql import TEXT
@@ -12,6 +12,7 @@ from sqlalchemy import and_, false, true
 from app.api.deps import UserDep, WatchListPagiDep
 from app.api.deps import (
     SessionDep,
+    NodesDep,
     ObsSessionsPagiDep,
     ObsPeriodDep,
     SpecgmWindowDep,
@@ -34,6 +35,7 @@ router = APIRouter()
 from app.core.config import settings
 from app.frb.products import K_DM, load_event
 from app.frb.source_pixel import fetch_source_pixels
+from app.core.nodes import BandReader, sort_rows
 
 # cfreq is stored as real, so match bands on the recovered first channel
 digest_chan0 = (
@@ -61,9 +63,24 @@ def burst_condition(session, source_name: str):
                 func.extract("epoch", epic_img_metadata.session_end) > first)
 
 
+# the sortable columns of the session list, as computed from a merged row
+SESSION_KEYS = {
+    "start_time": lambda r: r.start_time,
+    "end_time": lambda r: r.end_time,
+    "chan0": lambda r: r.chan0,
+    "chan_bw_hz": lambda r: None if r.chan_bw_hz is None or r.n_chan is None else r.chan_bw_hz * r.n_chan,
+    "int_time": lambda r: r.int_time,
+    "session_duration": lambda r: r.end_time - r.start_time,
+    "n_pol": lambda r: r.n_pol,
+    "session_id": lambda r: r.session_id,
+}
+
+
 @router.get("/sessions/", response_model=epic_img_session_public)
-async def get_imaging_sessions(
+def get_imaging_sessions(
     session: SessionDep,
+    nodes: NodesDep,
+    response: Response,
     current_user: UserDep,
     pagination: ObsSessionsPagiDep,
     obs_period: ObsPeriodDep,
@@ -124,7 +141,7 @@ async def get_imaging_sessions(
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .where(burst_cond)
     )
-    count = session.exec(stmnt).one()
+    count_stmnt = stmnt
     stmnt = (
         select(
             *group_rows,
@@ -146,17 +163,24 @@ async def get_imaging_sessions(
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .where(burst_cond)
         .order_by(*ordering)
-        .offset(pagination.skip)
-        .limit(pagination.limit)
+        # every node's first rows up to the end of the page, merged below
+        .limit(pagination.skip + pagination.limit)
     )
-    obs_sessions = session.exec(stmnt).all()
-    return epic_img_session_public(data=obs_sessions, count=count)
+    fan = nodes.run(lambda conn: (conn.execute(count_stmnt).scalar_one(), conn.execute(stmnt).all()))
+    count = sum(c for c, _ in fan.results.values())
+    keys = [(SESSION_KEYS[sort], order == "desc")] if sort in SESSION_KEYS else []
+    keys += [(SESSION_KEYS["start_time"], True), (SESSION_KEYS["chan0"], False)]
+    merged = sort_rows([r for _, rows in fan.results.values() for r in rows], keys)
+    obs_sessions = merged[pagination.skip:pagination.skip + pagination.limit]
+    fan.set_headers(response)
+    return epic_img_session_public(data=obs_sessions, count=count, **fan.flags())
 
 
 @router.get("/dailyobs/", response_model=list[daily_obs])
-async def get_imaging_sessions(
-    session: SessionDep, current_user: UserDep, window: DailySourcesDep
+def get_daily_obs(
+    nodes: NodesDep, response: Response, current_user: UserDep, window: DailySourcesDep
 ):
+    """The sources and bands imaged for at least 30 minutes of a UTC day"""
     stmnt = (
         select(
             epic_img_metadata.source_name,
@@ -186,26 +210,30 @@ async def get_imaging_sessions(
         )
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .distinct()
-        .order_by(epic_img_metadata.chan0.desc())
     )
-    print(stmnt)
-    return session.exec(stmnt).all()
+    fan = nodes.query(stmnt)
+    fan.set_headers(response)
+    rows = {(r.source_name, r.chan0, r.chan_bw_hz) for r in fan.rows()}
+    return [daily_obs(source_name=r[0], chan0=r[1], chan_bw_hz=r[2])
+            for r in sort_rows(list(rows), [(lambda r: r[1], True), (lambda r: r[0], False)])]
 
 
 @router.get("/dailyobs/days/", response_model=list[date])
-async def get_daily_obs_days(session: SessionDep, current_user: UserDep, start: date, end: date):
+def get_daily_obs_days(nodes: NodesDep, response: Response, current_user: UserDep, start: date, end: date):
     """The UTC days from `start` to `end` with a daily digest: those with at
     least 30 minutes of an imaging session, as /dailyobs/ requires"""
     if (end - start).days > 4000:
         raise HTTPException(status_code=400, detail="At most 4000 days at a time")
     lo, hi = datetime.combine(start, time()), datetime.combine(end + timedelta(days=1), time())
-    sessions = session.exec(
+    fan = nodes.query(
         select(epic_img_metadata.session_start, epic_img_metadata.session_end)
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .where(epic_img_metadata.session_start < hi)
         .where(epic_img_metadata.session_end > lo)
         .distinct()
-    ).all()
+    )
+    fan.set_headers(response)
+    sessions = {(r[0], r[1]) for r in fan.rows()}
     days = set()
     for s0, s1 in sessions:
         d = max(s0, lo).date()
@@ -218,8 +246,9 @@ async def get_daily_obs_days(session: SessionDep, current_user: UserDep, start: 
 
 
 @router.get("/spectrogram/", response_model=list[test_epic_pixels])
-async def get_spectrogram(
-    session: SessionDep, current_user: UserDep, specgm_window: SpecgmWindowDep, interpolate: bool = False
+def get_spectrogram(
+    session: SessionDep, nodes: NodesDep, response: Response, current_user: UserDep,
+    specgm_window: SpecgmWindowDep, interpolate: bool = False
 ):
     """Pixel values of a source over a window: the central pixel of its grid,
     or with `interpolate` every image interpolated at the source's exact
@@ -229,11 +258,13 @@ async def get_spectrogram(
             text("select ra_deg, dec_deg from public.epic_watchdog where source = :s order by id desc limit 1"),
             dict(s=specgm_window.source_name),
         ).first()
-        times, values = fetch_source_pixels(
-            session, specgm_window.source_name, specgm_window.chan0,
-            specgm_window.start_time.replace(tzinfo=None), specgm_window.end_time.replace(tzinfo=None),
-            float(src[0]) if src else 0.0, float(src[1]) if src else 0.0,
-        )
+        with BandReader(nodes, specgm_window.chan0, strict=False) as reader:
+            times, values = fetch_source_pixels(
+                reader, specgm_window.source_name, specgm_window.chan0,
+                specgm_window.start_time.replace(tzinfo=None), specgm_window.end_time.replace(tzinfo=None),
+                float(src[0]) if src else 0.0, float(src[1]) if src else 0.0,
+            )
+        reader.fan_out().set_headers(response)
         return [
             test_epic_pixels(img_time=t.astype("datetime64[us]").item(),
                              pixel_values=base64.b64encode(v.astype("<f4").tobytes()).decode())
@@ -259,15 +290,19 @@ async def get_spectrogram(
         )
     )
 
-    print(stmnt.compile().string)
-    data = session.exec(stmnt).all()
+    fan = nodes.query(stmnt, nodes=nodes.nodes_for_band(specgm_window.chan0))
+    fan.set_headers(response)
+    data = fan.rows()
+    if len(fan.results) > 1:
+        data = sort_rows(data, [(lambda r: r.img_time, False)])
     return data
 
 
 @router.get("/dailydigest/", response_model=epic_daily_digest_public)
-async def get_daily_digest(
-    session: SessionDep, current_user: UserDep, digest_def: DailyDigestDep
+def get_daily_digest(
+    nodes: NodesDep, response: Response, current_user: UserDep, digest_def: DailyDigestDep
 ):
+    """The daily digest of a source over a UTC day, every band"""
     stmnt = (
         select(
             epic_daily_digest_table.cfreq,
@@ -280,7 +315,7 @@ async def get_daily_digest(
         .group_by(epic_daily_digest_table.cfreq)
         .order_by(epic_daily_digest_table.cfreq.desc())
     )
-    stats = session.exec(stmnt).all()
+    stats_stmnt = stmnt
     stmnt = (
         select(
             epic_daily_digest_table.img_time,
@@ -297,13 +332,21 @@ async def get_daily_digest(
             epic_daily_digest_table.img_time.asc(),
         )
     )
-    data = session.exec(stmnt).all()
-    return epic_daily_digest_public(stats=stats, data=data)
+    fan = nodes.run(lambda conn: (conn.execute(stats_stmnt).all(), conn.execute(stmnt).all()))
+    fan.set_headers(response)
+    counts: dict[float, int] = {}
+    for stats, _ in fan.results.values():
+        for cfreq, n in stats:
+            counts[cfreq] = counts.get(cfreq, 0) + n
+    stats = [dict(cfreq=c, count=counts[c]) for c in sorted(counts, reverse=True)]
+    data = sort_rows([r for _, rows in fan.results.values() for r in rows],
+                     [(lambda r: r.cfreq, True), (lambda r: r.img_time, False)])
+    return epic_daily_digest_public(stats=stats, data=data, **fan.flags())
 
 
 @router.get("/lightcurve/", response_model=list[epic_digest_point])
-async def get_light_curve(
-    session: SessionDep, current_user: UserDep, obs_period: ObsPeriodDep, chan0: int
+def get_light_curve(
+    nodes: NodesDep, response: Response, current_user: UserDep, obs_period: ObsPeriodDep, chan0: int
 ):
     """Daily digest spectra of one source in one band over a time range"""
     stmnt = (
@@ -317,4 +360,8 @@ async def get_light_curve(
         .where(digest_chan0 == chan0)
         .order_by(epic_daily_digest_table.img_time.asc())
     )
-    return session.exec(stmnt).all()
+    fan = nodes.query(stmnt, nodes=nodes.nodes_for_band(chan0))
+    fan.set_headers(response)
+    if len(fan.results) > 1:
+        return sort_rows(fan.rows(), [(lambda r: r.img_time, False)])
+    return fan.rows()

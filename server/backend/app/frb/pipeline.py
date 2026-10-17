@@ -9,6 +9,11 @@ dedispersed product and its DM-time transform for all 25 pixels. When every
 band of an event has a result, or FRB_COMBINE_AFTER_H hours after the watch
 ended, whichever worker gets there first combines the bands, writes the
 summary and, if FRB_SLACK_NOTIFY is set, posts it to Slack once.
+
+The queue and the results are in the global database; the sessions and
+pixels of each band are in the database of the node that imaged it. A band
+whose node does not answer is left pending and tried again on the next run,
+and a worker takes the bands of its own node first.
 """
 
 import json
@@ -22,6 +27,7 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.nodes import BandReader, NodeUnavailable, get_nodes
 from app.frb import dmt, notify, products
 from app.frb.products import load_event
 
@@ -32,19 +38,30 @@ COMBINE_LOCK_BAND = -1
 SCHEMA = settings.EPIC_DATA_SCHEMA
 
 
-def _band_sessions(session: Session, event: dict) -> dict[int, dict]:
-    rows = session.execute(
-        text(
-            f"select chan0, n_chan, chan_bw_hz, int_time, min(session_start), max(session_end) from {SCHEMA}.epic_img_metadata2 "
-            "where source_name = :src and session_end > :t0 and session_start < :t1 group by chan0, n_chan, chan_bw_hz, int_time"
-        ),
+def _band_sessions(event: dict) -> tuple[dict[int, dict], list[str]]:
+    """The sessions of each band during the event's watch, from every node,
+    and the names of the nodes that did not answer"""
+    fan = get_nodes().query(
+        f"select chan0, n_chan, chan_bw_hz, int_time, min(session_start), max(session_end) from {SCHEMA}.epic_img_metadata2 "
+        "where source_name = :src and session_end > :t0 and session_start < :t1 group by chan0, n_chan, chan_bw_hz, int_time",
         dict(src=event["source"], t0=event["t_start"], t1=event["t_end"]),
-    ).all()
-    return {r[0]: dict(chan0=r[0], n_chan=r[1], chan_bw_hz=r[2], int_time=r[3], start=r[4], end=r[5]) for r in rows}
+    )
+    out: dict[int, dict] = {}
+    for name, rows in sorted(fan.results.items()):
+        for r in rows:
+            band = out.get(r[0])
+            if band is None:
+                out[r[0]] = dict(chan0=r[0], n_chan=r[1], chan_bw_hz=r[2], int_time=r[3], start=r[4], end=r[5],
+                                 nodes=[name])
+            else:  # the band on more than one node
+                band.update(start=min(band["start"], r[4]), end=max(band["end"], r[5]))
+                if name not in band["nodes"]:
+                    band["nodes"].append(name)
+    return out, fan.missing
 
 
-def expected_bands(session: Session, event: dict) -> list[int]:
-    return sorted(set(settings.OBS_CHANS) | set(_band_sessions(session, event)), reverse=True)
+def expected_bands(event: dict) -> list[int]:
+    return sorted(set(settings.OBS_CHANS) | set(_band_sessions(event)[0]), reverse=True)
 
 
 def _store_product(session: Session, event: dict, r: dict) -> None:
@@ -94,21 +111,28 @@ def process_band(session: Session, event_id: int, chan0: int) -> str:
     event = load_event(session, event_id)
     if event is None:
         raise ValueError(f"Event {event_id} not found or has no DM")
-    sessions = _band_sessions(session, event)
+    sessions, missing = _band_sessions(event)
     dm_half = dmt.dm_half_range(event["dm_err"])
     f_lo = chan0 * settings.CHAN_BW_HZ / 1e6
     meta = dict(f_lo_mhz=f_lo, f_hi_mhz=f_lo + 128 * settings.CHAN_BW_HZ / 1e6, dm_lo=event["dm"] - dm_half, dm_half=dm_half)
 
     if chan0 not in sessions:
+        # a node that may hold the band did not answer: try again next run
+        held_by = {n.name for n in get_nodes().nodes_for_band(chan0)}
+        if held_by & set(missing):
+            raise NodeUnavailable(held_by & set(missing))
         status, note = "no_session", "This band was not imaging the source during the watch."
         _store_product(session, event, dict(chan0=chan0, f_lo_mhz=f_lo, chan_bw_hz=2 * settings.CHAN_BW_HZ, n_chan=64,
                                             status=status, note=note))
     else:
         band = sessions[chan0]
-        log.info("FRB band: event %s band %s dedispersed product", event_id, chan0)
-        _store_product(session, event, products.band_product(session, event, band))
-        log.info("FRB band: event %s band %s DM transform over +-%.1f", event_id, chan0, dm_half)
-        res = dmt.band_dmt(session, event, band, dm_half)
+        with BandReader(get_nodes(), chan0, strict=True, node_names=band["nodes"],
+                        statement_timeout_ms=settings.FRB_NODE_STATEMENT_TIMEOUT_MS) as pixels:
+            log.info("FRB band: event %s band %s dedispersed product (node %s)", event_id, chan0,
+                     ",".join(band["nodes"]))
+            _store_product(session, event, products.band_product(pixels, event, band))
+            log.info("FRB band: event %s band %s DM transform over +-%.1f", event_id, chan0, dm_half)
+            res = dmt.band_dmt(pixels, event, band, dm_half)
         status, note = res["status"], res.get("note")
         meta |= {k: res[k] for k in ("f_lo_mhz", "f_hi_mhz", "smear_s", "width_match_s") if k in res}
         session.execute(text(f"delete from {SCHEMA}.epic_frb_dmt where event_id = :id and chan0 = :c"),
@@ -163,7 +187,7 @@ def combine_event(session: Session, event_id: int, notify_slack: bool | None = N
     rows = {r[0]: r for r in session.execute(
         text(f"select chan0, status, note, meta from {SCHEMA}.epic_frb_band where event_id = :id"), dict(id=event_id))}
     bands = []
-    for chan0 in expected_bands(session, event):
+    for chan0 in expected_bands(event):
         if chan0 in rows:
             bands.append(_load_band(session, event_id, rows[chan0]))
         else:
@@ -222,7 +246,12 @@ def pending_bands(session: Session) -> list[tuple[int, int]]:
         event = load_event(session, event_id)
         if event is None:
             continue
-        out += [(event_id, c) for c in expected_bands(session, event) if (event_id, c) not in done]
+        out += [(event_id, c) for c in expected_bands(event) if (event_id, c) not in done]
+    # the bands of this host's node first, read locally
+    local = get_nodes().local_names()
+    if local:
+        mine = {c for c, names in get_nodes().band_map().items() if local & set(names)}
+        out.sort(key=lambda item: item[1] not in mine)
     return out
 
 
@@ -244,7 +273,7 @@ def ready_to_combine(session: Session) -> list[int]:
         if current and current[0] >= dmt.VERSION and current[1] >= max(b[1] for b in bands):
             continue  # combined since the last band changed
         event = load_event(session, event_id)
-        complete = {b[0] for b in bands} >= set(expected_bands(session, event))
+        complete = {b[0] for b in bands} >= set(expected_bands(event))
         overdue = session.execute(
             text("select t_end < (now() at time zone 'utc') - :h * interval '1 hour' from public.epic_watchdog where id = :id"),
             dict(id=event_id, h=settings.FRB_COMBINE_AFTER_H),
@@ -276,17 +305,27 @@ def _with_lock(event_id: int, chan0: int, fn) -> bool:
 def run_worker() -> dict:
     """Process pending bands until none is left that no one else holds, then
     combine any event that is ready"""
-    done = dict(bands=[], combined=[])
+    done = dict(bands=[], combined=[], deferred=[])
     with Session(engine) as session:
         while True:
             progressed = False
             for event_id, chan0 in pending_bands(session):
+                if (event_id, chan0) in done["deferred"]:
+                    continue
                 def work():
                     try:
                         process_band(session, event_id, chan0)
+                    except NodeUnavailable as e:
+                        # no result is stored, so the band stays pending for the next run
+                        session.rollback()
+                        log.warning("FRB band deferred: event %s band %s, %s", event_id, chan0, e)
+                        done["deferred"].append((event_id, chan0))
+                        return
                     except Exception as e:
                         session.rollback()
                         log.exception("FRB band failed: event %s band %s", event_id, chan0)
+                        # a failed band is pending again; try it on the next run, not in this one
+                        done["deferred"].append((event_id, chan0))
                         session.execute(
                             text(f"insert into {SCHEMA}.epic_frb_band (event_id, chan0, status, note, products_version, "
                                  "dmt_version, host) values (:id, :c, 'failed', :n, :pv, :dv, :h) on conflict (event_id, chan0) "

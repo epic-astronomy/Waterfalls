@@ -117,7 +117,14 @@ class epic_img_session(epic_img_metadata_base, obs_period):
     pass
 
 
-class epic_img_session_public(SQLModel):
+class nodes_flags(SQLModel):
+    """Nodes whose per-node database did not answer, and the bands (chan0)
+    they are known to hold; empty when every node answered"""
+    nodes_missing: list[str] = []
+    bands_missing: list[int] = []
+
+
+class epic_img_session_public(nodes_flags):
     data: list[epic_img_session]
     count: int
 
@@ -186,7 +193,7 @@ class epic_daily_digest_stats(SQLModel):
     cfreq: float
     count: int
 
-class epic_daily_digest_public(SQLModel):
+class epic_daily_digest_public(nodes_flags):
     stats: List[epic_daily_digest_stats]
     data: List[epic_daily_digest_base]
 

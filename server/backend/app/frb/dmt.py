@@ -32,7 +32,6 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from sqlalchemy import text
-from sqlmodel import Session
 
 from app.core.config import settings
 from app.frb import rfi
@@ -119,13 +118,14 @@ def _fluence_limit(f_mhz: float, elevation: float, bandwidth_hz: float, width_s:
     return dict(t_sys_k=t_sys, sefd_jy=sefd, fluence_limit_jyms=fluence)
 
 
-def _fetch_pixel(session: Session, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int, key):
-    """Stokes I of one pixel of the 5x5 grid, as (times, [n_rows, n_chan])"""
+def _fetch_pixel(pixel_db, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int, key):
+    """Stokes I of one pixel of the 5x5 grid, as (times, [n_rows, n_chan]),
+    read through `pixel_db` (the band's node, see fetch_source_pixels)"""
     times, vals = [], []
     t = t0
     while t < t1:
         t_next = min(t1, t + timedelta(seconds=FETCH_CHUNK_S))
-        res = session.execute(
+        res = pixel_db.execute(
             text(
                 f"select img_time, pixel_values from {settings.EPIC_DATA_SCHEMA}.epic_pixels "
                 "where img_time >= :t0 and img_time < :t1 and source_name = :src "
@@ -143,8 +143,9 @@ def _fetch_pixel(session: Session, source: str, chan0: int, t0: datetime, t1: da
     return np.array(times, dtype="datetime64[us]"), data[:, :, 0] + data[:, :, 1]
 
 
-def band_dmt(session: Session, event: dict, band: dict, dm_half: float) -> dict:
-    """DM-time transform of one band for every pixel"""
+def band_dmt(pixel_db, event: dict, band: dict, dm_half: float) -> dict:
+    """DM-time transform of one band for every pixel, from the pixels read
+    through `pixel_db` (the band's node)"""
     dm, t_inf = event["dm"], event["t_inf"]
     n_chan, dt = band["n_chan"], band["int_time"] or 0.08359183673469386
     chan_bw = settings.CHAN_BW_HZ * round(band["chan_bw_hz"] / settings.CHAN_BW_HZ)
@@ -192,10 +193,10 @@ def band_dmt(session: Session, event: dict, band: dict, dm_half: float) -> dict:
         if key == (0, 0):
             # the source itself, interpolated at its exact position; the other
             # pixels stay as stored, for the comparison across the grid
-            times, stokes_i = fetch_source_stokes_i(session, event["source"], band["chan0"], t_first, t_last,
+            times, stokes_i = fetch_source_stokes_i(pixel_db, event["source"], band["chan0"], t_first, t_last,
                                                     n_chan, event["ra"], event["dec"])
         else:
-            times, stokes_i = _fetch_pixel(session, event["source"], band["chan0"], t_first, t_last, n_chan, key)
+            times, stokes_i = _fetch_pixel(pixel_db, event["source"], band["chan0"], t_first, t_last, n_chan, key)
         if not len(times):
             continue
         cleaned, mask = rfi.clean(stokes_i, dt, max(smear, 1.0))

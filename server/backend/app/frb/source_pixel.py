@@ -21,7 +21,6 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 from sqlalchemy import text
-from sqlmodel import Session
 
 from app.core.config import settings
 
@@ -66,11 +65,13 @@ def interpolation_weights(dx: np.ndarray, dy: np.ndarray) -> np.ndarray:
     return wy[:, :, None] * wx[:, None, :]
 
 
-def fetch_source_pixels(session: Session, source: str, chan0: int, t0: datetime, t1: datetime,
+def fetch_source_pixels(pixels, source: str, chan0: int, t0: datetime, t1: datetime,
                         ra: float, dec: float):
     """Every value stored per image (all channels and polarisations)
     interpolated at the source, as (times, [n_images, n_values]). Used by the
     FRB analysis (through fetch_source_stokes_i) and by the spectrogram page.
+    `pixels` reads epic_pixels of the band: a connection to the node holding
+    it, or an app.core.nodes.BandReader.
 
     Lanczos-2 needs four pixels per axis, so it uses the whole 5x5 grid. Its
     pixels on either side of a grid move are the same physical pixels, which
@@ -81,7 +82,7 @@ def fetch_source_pixels(session: Session, source: str, chan0: int, t0: datetime,
     t = t0
     while t < t1:
         t_next = min(t1, t + timedelta(seconds=CHUNK_S))
-        rows = session.execute(
+        rows = pixels.execute(
             text(
                 f"select img_time, pix_offset[0]::int, pix_offset[1]::int, pixel_coord[0], pixel_coord[1], "
                 f"source_pix[0], source_pix[1], pixel_values from {settings.EPIC_DATA_SCHEMA}.epic_pixels "
@@ -140,10 +141,10 @@ def fetch_source_pixels(session: Session, source: str, chan0: int, t0: datetime,
     return np.concatenate(times_out), np.concatenate(values_out)
 
 
-def fetch_source_stokes_i(session: Session, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int,
+def fetch_source_stokes_i(pixels, source: str, chan0: int, t0: datetime, t1: datetime, n_chan: int,
                           ra: float, dec: float):
     """Stokes I (XX + YY) interpolated at the source, as (times, [n_images, n_chan])"""
-    times, values = fetch_source_pixels(session, source, chan0, t0, t1, ra, dec)
+    times, values = fetch_source_pixels(pixels, source, chan0, t0, t1, ra, dec)
     if not len(times):
         return times, np.empty((0, n_chan))
     v = values.reshape(len(times), n_chan, N_POL)

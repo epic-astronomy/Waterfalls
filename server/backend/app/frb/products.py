@@ -77,8 +77,9 @@ def _boxcar_peak(ts: np.ndarray, on: np.ndarray, off: np.ndarray, max_width: int
     return best
 
 
-def band_product(session: Session, event: dict, band: dict) -> dict:
-    """Dedispersed, normalised product of one band of one event"""
+def band_product(pixels, event: dict, band: dict) -> dict:
+    """Dedispersed, normalised product of one band of one event, from the
+    pixels read through `pixels` (the band's node)"""
     dm, dm_err, t_inf = event["dm"], event["dm_err"], event["t_inf"]
     n_chan, dt = band["n_chan"], band["int_time"] or 0.08359183673469386
     chan_bw = settings.CHAN_BW_HZ * round(band["chan_bw_hz"] / settings.CHAN_BW_HZ)
@@ -110,7 +111,7 @@ def band_product(session: Session, event: dict, band: dict) -> dict:
         return out | dict(status="no_data", note=f"The burst reached this band {when}.")
 
     # the source's value interpolated at its exact position, not the nearest pixel
-    times, stokes_i = fetch_source_stokes_i(session, event["source"], band["chan0"], t_first, t_last, n_chan,
+    times, stokes_i = fetch_source_stokes_i(pixels, event["source"], band["chan0"], t_first, t_last, n_chan,
                                             event["ra"], event["dec"])
     if not len(times):
         return out | dict(status="no_data", note="No images of the source were stored for this window.")
@@ -208,70 +209,3 @@ def load_event(session: Session, event_id: int) -> dict | None:
         dm=float(dm), dm_err=float(voevent_param(row[5], "dm_error") or 0.0),
         ra=float(row[6]), dec=float(row[7]),
     )
-
-
-def compute_event(session: Session, event_id: int) -> list[dict]:
-    """Compute and store the products of every band of an event"""
-    event = load_event(session, event_id)
-    if event is None:
-        raise ValueError(f"Event {event_id} not found or has no DM")
-
-    sessions = session.execute(
-        text(
-            f"select chan0, n_chan, chan_bw_hz, int_time, min(session_start), max(session_end) "
-            f"from {settings.EPIC_DATA_SCHEMA}.epic_img_metadata2 "
-            "where source_name = :src and session_end > :t0 and session_start < :t1 "
-            "group by chan0, n_chan, chan_bw_hz, int_time"
-        ),
-        dict(src=event["source"], t0=event["t_start"], t1=event["t_end"]),
-    ).all()
-    bands = {
-        s[0]: dict(chan0=s[0], n_chan=s[1], chan_bw_hz=s[2], int_time=s[3], start=s[4], end=s[5])
-        for s in sessions
-    }
-
-    results = []
-    for chan0 in sorted(set(settings.OBS_CHANS) | set(bands)):
-        if chan0 in bands:
-            log.info("FRB products: event %s band %s", event_id, chan0)
-            res = band_product(session, event, bands[chan0])
-        else:
-            res = dict(
-                chan0=chan0, f_lo_mhz=chan0 * settings.CHAN_BW_HZ / 1e6,
-                chan_bw_hz=2 * settings.CHAN_BW_HZ, n_chan=64,
-                status="no_session", note="This band was not imaging the source during the watch.",
-            )
-        results.append(res)
-
-    session.execute(text(f"delete from {settings.EPIC_DATA_SCHEMA}.epic_frb_products where event_id = :id"), dict(id=event_id))
-    cols = [
-        "status", "note", "f_lo_mhz", "chan_bw_hz", "n_chan", "dt_s", "t0_rel_s", "n_time", "smear_s",
-        "on_half_s", "coverage", "flagged", "z_image", "timeseries", "peak_snr", "peak_width_s", "peak_t_s",
-    ]
-    for r in results:
-        session.execute(
-            text(
-                f"insert into {settings.EPIC_DATA_SCHEMA}.epic_frb_products "
-                f"(event_id, chan0, source_name, dm, dm_err, t_inf, version, {', '.join(cols)}) values "
-                f"(:event_id, :chan0, :source_name, :dm, :dm_err, :t_inf, :version, {', '.join(':' + c for c in cols)})"
-            ),
-            {c: r.get(c) for c in cols}
-            | dict(event_id=event_id, chan0=r["chan0"], source_name=event["source"],
-                   dm=event["dm"], dm_err=event["dm_err"], t_inf=event["t_inf"], version=VERSION),
-        )
-    session.commit()
-    return results
-
-
-def pending_events(session: Session) -> list[int]:
-    """Finished CHIME watches without current products"""
-    rows = session.execute(
-        text(
-            "select w.id from public.epic_watchdog w where w.event_type = 'FRB detection' "
-            "and w.t_end < (now() at time zone 'utc') and w.t_end > (now() at time zone 'utc') - make_interval(days => :days) "
-            f"and not exists (select 1 from {settings.EPIC_DATA_SCHEMA}.epic_frb_products p "
-            "where p.event_id = w.id and p.version >= :version) order by w.t_end"
-        ),
-        dict(days=settings.FRB_PRODUCTS_MAX_AGE_DAYS, version=VERSION),
-    ).all()
-    return [r[0] for r in rows]

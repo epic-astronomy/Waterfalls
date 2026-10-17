@@ -6,7 +6,8 @@ from sqlalchemy import and_, case, or_, true
 from sqlmodel import select, func, Session, insert, update
 
 from app.api.deps import UserDep, WatchListPagiDep
-from app.api.deps import SessionDep, Pagination
+from app.api.deps import SessionDep, NodesDep, Pagination
+from app.core.nodes import NodeSet
 from app.models.epic_data import (
     epic_watchdog,
     epic_watchdog_public,
@@ -101,22 +102,26 @@ class WatchListRow(BaseModel):
 RECORDING_WINDOW = timedelta(minutes=10)
 
 
-def data_status(session, rows) -> dict[int, str]:
+def data_status(nodes: NodeSet, rows) -> tuple[dict[int, str | None], list[str], list[int]]:
     """The data status of each watch-list entry, from the imaging sessions
-    that overlap its watch"""
+    on the nodes that overlap its watch, and the nodes and bands that did not
+    answer. The watch list and the sessions are in different databases, so
+    they are matched here. While a node is missing, a status that says there
+    is no data cannot be known and is left blank."""
     names = list({w.source for w in rows})
     if not names:
-        return {}
+        return {}, [], []
     spans: dict[str, list] = {}
-    for name, s0, s1 in session.exec(
+    fan = nodes.query(
         select(epic_img_metadata.source_name, epic_img_metadata.session_start, epic_img_metadata.session_end)
         .where(epic_img_metadata.source_name.in_(names))
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .distinct()
-    ).all():
+    )
+    for name, s0, s1 in fan.rows():
         spans.setdefault(name, []).append((s0, s1))
     now = datetime.utcnow()
-    out = {}
+    out: dict[int, str | None] = {}
     for w in rows:
         t0, t1 = w.t_start or datetime.min, w.t_end or datetime.max
         mine = [(a, b) for a, b in spans.get(w.source, []) if a < t1 and b > t0]
@@ -124,17 +129,23 @@ def data_status(session, rows) -> dict[int, str]:
             out[w.id] = "recording" if any(b > now - RECORDING_WINDOW for _, b in mine) else "not_recording"
         else:
             out[w.id] = "observed" if mine else "not_observed"
-    return out
+        if fan.missing and out[w.id] in ("not_recording", "not_observed"):
+            out[w.id] = None
+    return out, fan.missing, fan.bands_missing
 
 
 class WatchListPage(BaseModel):
     data: list[WatchListRow]
     count: int
+    # nodes whose sessions could not be read, and their bands (chan0)
+    nodes_missing: list[str] = []
+    bands_missing: list[int] = []
 
 
 @router.get("/all/", response_model=WatchListPage)
-async def get_all_sources(
+def get_all_sources(
     session: SessionDep,
+    nodes: NodesDep,
     current_user: UserDep,
     pagination: WatchListPagiDep,
     category: Literal["all", "frb", "pulsar", "solar_system", "other"] = "all",
@@ -173,9 +184,9 @@ async def get_all_sources(
         .limit(pagination.limit)
     )
     rows = session.exec(stmnt).all()
-    status = data_status(session, [w for w, _, _ in rows])
+    status, missing, bands = data_status(nodes, [w for w, _, _ in rows])
     data = [WatchListRow(**w.model_dump(), category=c, origin=o, data_status=status.get(w.id)) for w, c, o in rows]
-    return WatchListPage(data=data, count=count)
+    return WatchListPage(data=data, count=count, nodes_missing=missing, bands_missing=bands)
 
 
 @router.get("/source/{source_id}", response_model=WatchListRow)

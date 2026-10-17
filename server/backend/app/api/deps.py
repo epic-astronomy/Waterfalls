@@ -12,6 +12,7 @@ from sqlmodel import Session
 # from app.core import security
 from app.core.config import settings
 from app.core.db import engine
+from app.core.nodes import NodeSet, get_nodes
 from app.models.epic_data import epic_obs_period
 
 # from app.models import users
@@ -127,6 +128,8 @@ def get_user() -> int:
 
 
 SessionDep = Annotated[Session, Depends(get_db)]
+# the per-node imaging databases
+NodesDep = Annotated[NodeSet, Depends(get_nodes)]
 UserDep = Annotated[int, Depends(get_user)]
 WatchListPagiDep = Annotated[Pagination, Depends(validate_pagination)]
 ObsSessionsPagiDep = Annotated[Pagination, Depends(validate_pagination)]
