@@ -119,9 +119,13 @@ class epic_img_session(epic_img_metadata_base, obs_period):
 
 class nodes_flags(SQLModel):
     """Nodes whose per-node database did not answer, and the bands (chan0)
-    they are known to hold; empty when every node answered"""
+    they are known to hold; empty when every node answered. archive_missing
+    when the archive of older data was needed and did not answer, with the
+    time before which data are missing, if known."""
     nodes_missing: list[str] = []
     bands_missing: list[int] = []
+    archive_missing: bool = False
+    archive_before: datetime | None = None
 
 
 class epic_img_session_public(nodes_flags):

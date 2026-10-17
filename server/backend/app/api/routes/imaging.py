@@ -125,24 +125,6 @@ def get_imaging_sessions(
         epic_img_metadata.int_time,
     ]
     stmnt = (
-        select(func.count(epic_img_metadata.session_id))
-        .where(
-            func.tsrange(obs_period.start_time, obs_period.end_time, "[]").op(
-                "&&"
-            )(
-                func.tsrange(
-                    epic_img_metadata.session_start,
-                    epic_img_metadata.session_end,
-                    "[]",
-                )
-            )
-        )
-        .where(epic_img_metadata.source_name == obs_period.source_name)
-        .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
-        .where(burst_cond)
-    )
-    count_stmnt = stmnt
-    stmnt = (
         select(
             *group_rows,
             epic_img_metadata.session_start.label("start_time"),
@@ -162,16 +144,15 @@ def get_imaging_sessions(
         .where(epic_img_metadata.source_name == obs_period.source_name)
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .where(burst_cond)
-        .order_by(*ordering)
-        # every node's first rows up to the end of the page, merged below
-        .limit(pagination.skip + pagination.limit)
     )
-    fan = nodes.run(lambda conn: (conn.execute(count_stmnt).scalar_one(), conn.execute(stmnt).all()))
-    count = sum(c for c, _ in fan.results.values())
+    # every matching session of every node and the archive, each once (a
+    # session in both tiers as the node has it), counted, ordered and paged here
+    fan = nodes.query_tiers(stmnt, since=obs_period.start_time)
+    rows = fan.rows(key=lambda r: (r.session_id, r.chan0))
+    count = len(rows)
     keys = [(SESSION_KEYS[sort], order == "desc")] if sort in SESSION_KEYS else []
     keys += [(SESSION_KEYS["start_time"], True), (SESSION_KEYS["chan0"], False)]
-    merged = sort_rows([r for _, rows in fan.results.values() for r in rows], keys)
-    obs_sessions = merged[pagination.skip:pagination.skip + pagination.limit]
+    obs_sessions = sort_rows(rows, keys)[pagination.skip:pagination.skip + pagination.limit]
     fan.set_headers(response)
     return epic_img_session_public(data=obs_sessions, count=count, **fan.flags())
 
@@ -211,7 +192,7 @@ def get_daily_obs(
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .distinct()
     )
-    fan = nodes.query(stmnt)
+    fan = nodes.query_tiers(stmnt, since=window.start_time)
     fan.set_headers(response)
     rows = {(r.source_name, r.chan0, r.chan_bw_hz) for r in fan.rows()}
     return [daily_obs(source_name=r[0], chan0=r[1], chan_bw_hz=r[2])
@@ -225,12 +206,13 @@ def get_daily_obs_days(nodes: NodesDep, response: Response, current_user: UserDe
     if (end - start).days > 4000:
         raise HTTPException(status_code=400, detail="At most 4000 days at a time")
     lo, hi = datetime.combine(start, time()), datetime.combine(end + timedelta(days=1), time())
-    fan = nodes.query(
+    fan = nodes.query_tiers(
         select(epic_img_metadata.session_start, epic_img_metadata.session_end)
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
         .where(epic_img_metadata.session_start < hi)
         .where(epic_img_metadata.session_end > lo)
-        .distinct()
+        .distinct(),
+        since=lo,
     )
     fan.set_headers(response)
     sessions = {(r[0], r[1]) for r in fan.rows()}
@@ -270,30 +252,28 @@ def get_spectrogram(
                              pixel_values=base64.b64encode(v.astype("<f4").tobytes()).decode())
             for t, v in zip(times, values)
         ]
-    stmnt = (
-        select(
-            epic_pixels.img_time.label("img_time"),
-            func.encode(epic_pixels.pixel_values, "base64").label(
-                "pixel_values"
-            ),
-        )
-        .where(
-            epic_pixels.img_time.between(
-                specgm_window.start_time, specgm_window.end_time
+    def window(t0, t1):
+        return (
+            select(
+                epic_pixels.img_time.label("img_time"),
+                func.encode(epic_pixels.pixel_values, "base64").label(
+                    "pixel_values"
+                ),
+            )
+            .where(epic_pixels.img_time.between(t0, t1))
+            .where(epic_pixels.chan0 == specgm_window.chan0)
+            .where(epic_pixels.source_name == specgm_window.source_name)
+            .where(
+                func.cast(epic_pixels.pix_offset, TEXT)
+                == func.any_([specgm_window.pixel_positions])
             )
         )
-        .where(epic_pixels.chan0 == specgm_window.chan0)
-        .where(epic_pixels.source_name == specgm_window.source_name)
-        .where(
-            func.cast(epic_pixels.pix_offset, TEXT)
-            == func.any_([specgm_window.pixel_positions])
-        )
-    )
 
-    fan = nodes.query(stmnt, nodes=nodes.nodes_for_band(specgm_window.chan0))
+    # the band's nodes over the window, the archive over its older part
+    fan = nodes.query_range(window, specgm_window.chan0, specgm_window.start_time, specgm_window.end_time)
     fan.set_headers(response)
     data = fan.rows()
-    if len(fan.results) > 1:
+    if sum(1 for rows in fan.results.values() if rows) > 1:
         data = sort_rows(data, [(lambda r: r.img_time, False)])
     return data
 
@@ -302,20 +282,8 @@ def get_spectrogram(
 def get_daily_digest(
     nodes: NodesDep, response: Response, current_user: UserDep, digest_def: DailyDigestDep
 ):
-    """The daily digest of a source over a UTC day, every band"""
-    stmnt = (
-        select(
-            epic_daily_digest_table.cfreq,
-            func.count(epic_daily_digest_table.cfreq),
-        )
-        .where(epic_daily_digest_table.source_name == digest_def.source_name)
-        .where(epic_daily_digest_table.img_time >= digest_def.start_time)
-        .where(epic_daily_digest_table.img_time <= digest_def.end_time)
-        .where(digest_chan0 == func.any_(settings.OBS_CHANS))
-        .group_by(epic_daily_digest_table.cfreq)
-        .order_by(epic_daily_digest_table.cfreq.desc())
-    )
-    stats_stmnt = stmnt
+    """The daily digest of a source over a UTC day, every band, with the
+    number of spectra per band"""
     stmnt = (
         select(
             epic_daily_digest_table.img_time,
@@ -327,20 +295,16 @@ def get_daily_digest(
         .where(epic_daily_digest_table.img_time >= digest_def.start_time)
         .where(epic_daily_digest_table.img_time <= digest_def.end_time)
         .where(digest_chan0 == func.any_(settings.OBS_CHANS))
-        .order_by(
-            epic_daily_digest_table.cfreq.desc(),
-            epic_daily_digest_table.img_time.asc(),
-        )
     )
-    fan = nodes.run(lambda conn: (conn.execute(stats_stmnt).all(), conn.execute(stmnt).all()))
+    fan = nodes.query_tiers(stmnt, since=digest_def.start_time)
     fan.set_headers(response)
-    counts: dict[float, int] = {}
-    for stats, _ in fan.results.values():
-        for cfreq, n in stats:
-            counts[cfreq] = counts.get(cfreq, 0) + n
-    stats = [dict(cfreq=c, count=counts[c]) for c in sorted(counts, reverse=True)]
-    data = sort_rows([r for _, rows in fan.results.values() for r in rows],
+    # a spectrum in both tiers counts once
+    data = sort_rows(fan.rows(key=lambda r: (r.img_time, r.cfreq)),
                      [(lambda r: r.cfreq, True), (lambda r: r.img_time, False)])
+    counts: dict[float, int] = {}
+    for r in data:
+        counts[r.cfreq] = counts.get(r.cfreq, 0) + 1
+    stats = [dict(cfreq=c, count=counts[c]) for c in sorted(counts, reverse=True)]
     return epic_daily_digest_public(stats=stats, data=data, **fan.flags())
 
 
@@ -349,19 +313,17 @@ def get_light_curve(
     nodes: NodesDep, response: Response, current_user: UserDep, obs_period: ObsPeriodDep, chan0: int
 ):
     """Daily digest spectra of one source in one band over a time range"""
-    stmnt = (
-        select(epic_daily_digest_table.img_time, epic_daily_digest_table.stokes_i)
-        .where(epic_daily_digest_table.source_name == obs_period.source_name)
-        .where(
-            epic_daily_digest_table.img_time.between(
-                obs_period.start_time, obs_period.end_time
-            )
+    def window(t0, t1):
+        return (
+            select(epic_daily_digest_table.img_time, epic_daily_digest_table.stokes_i)
+            .where(epic_daily_digest_table.source_name == obs_period.source_name)
+            .where(epic_daily_digest_table.img_time.between(t0, t1))
+            .where(digest_chan0 == chan0)
+            .order_by(epic_daily_digest_table.img_time.asc())
         )
-        .where(digest_chan0 == chan0)
-        .order_by(epic_daily_digest_table.img_time.asc())
-    )
-    fan = nodes.query(stmnt, nodes=nodes.nodes_for_band(chan0))
+    fan = nodes.query_range(window, chan0, obs_period.start_time, obs_period.end_time)
     fan.set_headers(response)
-    if len(fan.results) > 1:
-        return sort_rows(fan.rows(), [(lambda r: r.img_time, False)])
-    return fan.rows()
+    rows = fan.rows(key=lambda r: r.img_time)
+    if sum(1 for r in fan.results.values() if r) > 1:
+        return sort_rows(rows, [(lambda r: r.img_time, False)])
+    return rows

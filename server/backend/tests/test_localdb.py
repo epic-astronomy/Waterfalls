@@ -4,13 +4,17 @@ clusters. Run from server/backend on a worker, not on the head node:
 
     python -m unittest tests.test_localdb
 
-Two clusters are created with initdb in a temporary directory: cluster A
-holds node a's database (band 672) and the global database; cluster B holds
-node b's (band 864); node c points at a closed port, as a node that is down.
-A third database on A, "ref", holds all the data in one place, as the single
-Citus coordinator did. The routes of this branch, reading the nodes, must
-answer as the code of the main branch does reading "ref"; the FRB analysis
-must give the same products and leave a band on a node that is down pending.
+Three clusters are created with initdb in a temporary directory: cluster A
+holds node a's database (band 672), cluster B node b's (band 864), and
+cluster H the head node's database with the global tables and the archive of
+older per-node data; node c points at a closed port, as a node that is down.
+Node a's older data have been moved to the archive, with some rows in both
+tiers, as in a partition caught mid-move. A database on A, "ref", holds all
+the data once, as the single Citus coordinator did. The routes of this
+branch, reading the nodes and the archive, must answer as the code of the
+main branch does reading "ref"; the FRB analysis, whose window reaches into
+the archive, must give the same products and leave a band on a node that is
+down pending.
 
 PG_BIN names the directory of initdb and pg_ctl, if they are not on the path.
 """
@@ -48,17 +52,19 @@ def _pg_bin() -> str | None:
 
 PG_BIN = _pg_bin()
 USER = os.environ.get("USER") or "postgres"
-PORT_A, PORT_B, PORT_DEAD = _free_port(), _free_port(), _free_port()
+PORT_A, PORT_B, PORT_H, PORT_DEAD = _free_port(), _free_port(), _free_port(), _free_port()
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.dirname(os.path.dirname(BACKEND))
 
 # settings of this branch's code: the global database and the three nodes
 ENV = dict(
     PROJECT_NAME="waterfalls-test", ENVIRONMENT="staging", EPIC_DATA_SCHEMA="sevilleta",
-    POSTGRES_HOST="127.0.0.1", POSTGRES_PORT=str(PORT_A), POSTGRES_USER=USER, POSTGRES_PASSWORD="",
+    POSTGRES_HOST="127.0.0.1", POSTGRES_PORT=str(PORT_H), POSTGRES_USER=USER, POSTGRES_PASSWORD="",
     POSTGRES_DB="head",
     EPIC_NODES=f"a=127.0.0.1:{PORT_A},b=127.0.0.1:{PORT_B},c=127.0.0.1:{PORT_DEAD}",
-    EPIC_NODE_DB="epic", EPIC_NODE_CONNECT_TIMEOUT_S="2", EPIC_NODE_RETRY_S="0",
+    EPIC_NODE_DB="epic", EPIC_NODE_USER=USER, EPIC_NODE_CONNECT_TIMEOUT_S="2", EPIC_NODE_RETRY_S="0",
+    # the archive is the head database (the default); read 10 minutes above the boundary
+    EPIC_ARCHIVE_OVERLAP_S="600", EPIC_ARCHIVE_BOUNDARY_CACHE_S="0",
     FRB_DM_HALF_MIN="1.0", FRB_DM_HALF_MAX="1.0", FRB_SLACK_NOTIFY="false",
 )
 os.environ.update(ENV)
@@ -98,7 +104,15 @@ class Cluster:
         self.connect("postgres").cursor().execute(f"create database {db}")
         with self.connect(db) as conn:
             for path in schemas:
-                conn.cursor().execute(open(os.path.join(BACKEND, "tests", path)).read())
+                conn.cursor().execute(open(os.path.join(BACKEND, "tests", path)).read() if path.endswith(".sql")
+                                      else path)
+
+
+def archive_schema() -> str:
+    """The archive tables: the node tables under their assumed archive names"""
+    import re
+    sql = open(os.path.join(BACKEND, "tests", "schema_node.sql")).read()
+    return re.sub(r"sevilleta\.(epic_\w+)", r"sevilleta.\1_archive", sql)
 
 
 def _f32(values) -> bytes:
@@ -174,21 +188,41 @@ def make_data():
     return sessions, pixels, digest, watchdog
 
 
-def load(conn, sessions, pixels, digest, bands=None, watchdog=None):
+def load(conn, sessions, pixels, digest, bands=None, watchdog=None, suffix=""):
     from psycopg2.extras import execute_values
     cur = conn.cursor()
     for chan0 in sessions:
-        if bands is None or chan0 in bands:
-            execute_values(cur, "insert into sevilleta.epic_img_metadata2 values %s", sessions[chan0])
+        if (bands is None or chan0 in bands) and sessions[chan0]:
+            execute_values(cur, f"insert into sevilleta.epic_img_metadata2{suffix} values %s", sessions[chan0])
     for chan0 in pixels:
         if (bands is None or chan0 in bands) and pixels[chan0]:
-            execute_values(cur, "insert into sevilleta.epic_pixels values %s", pixels[chan0], page_size=5000)
+            execute_values(cur, f"insert into sevilleta.epic_pixels{suffix} values %s", pixels[chan0], page_size=5000)
     for chan0 in digest:
-        if bands is None or chan0 in bands:
-            execute_values(cur, "insert into sevilleta.epic_daily_digest values %s", digest[chan0])
+        if (bands is None or chan0 in bands) and digest[chan0]:
+            execute_values(cur, f"insert into sevilleta.epic_daily_digest{suffix} values %s", digest[chan0])
     if watchdog:
         execute_values(cur, "insert into public.epic_watchdog (source, event_time, ra_deg, dec_deg, event_type, "
                             "t_start, t_end, watch_status, reason, author, voevent) values %s", watchdog)
+
+
+def split_672(sessions, pixels, digest):
+    """Node a's data (band 672) as the curator leaves them: the older rows in
+    the archive, the newer on the node, and some rows in both"""
+    frb = [r for r in pixels[672] if r[6] == "FRB-X"]
+    split = frb[len(frb) // 2][0]  # half of the burst window is archived
+    both = timedelta(seconds=10)
+    node = dict(
+        split=split,
+        sessions={672: [s for s in sessions[672] if s[1] >= DAY + timedelta(hours=5)]},
+        pixels={672: [r for r in frb if r[0] >= split]},
+        digest={672: [d for d in digest[672] if d[1] >= DAY + timedelta(hours=10)]},
+    )
+    archived = dict(
+        sessions={672: [s for s in sessions[672] if s[1] < DAY + timedelta(hours=6)]},
+        pixels={672: [r for r in pixels[672] if r[6] == "sun" or r[0] < split + both]},
+        digest={672: [d for d in digest[672] if d[1] < DAY + timedelta(hours=12)]},
+    )
+    return node, archived
 
 
 def requests() -> list[tuple[str, dict]]:
@@ -210,7 +244,8 @@ def requests() -> list[tuple[str, dict]]:
                   end_time=(DAY + timedelta(hours=1, minutes=30, seconds=40)).isoformat(), source_name="sun")
     for chan0 in (672, 864):
         out.append(("/imaging/spectrogram/", window | dict(chan0=chan0, pixel_positions="(0,0)")))
-    out.append(("/imaging/spectrogram/", window | dict(chan0=864, pixel_positions="(0,0)", interpolate="true")))
+    for chan0 in (672, 864):
+        out.append(("/imaging/spectrogram/", window | dict(chan0=chan0, pixel_positions="(0,0)", interpolate="true")))
     out.append(("/imaging/dailydigest/", dict(day=DAY.date().isoformat(), source_name="sun")))
     out.append(("/imaging/lightcurve/", dict(source_name="sun", chan0=672, start_time=DAY.isoformat(),
                                              end_time=(DAY + timedelta(hours=12)).isoformat())))
@@ -237,7 +272,7 @@ def normalise(path: str, body):
     """The body without the missing-node flags, with spectrogram rows in time
     order (the single-database query had no ORDER BY)"""
     if isinstance(body, dict):
-        body = {k: v for k, v in body.items() if k not in ("nodes_missing", "bands_missing")}
+        body = {k: v for k, v in body.items() if k not in ("nodes_missing", "bands_missing", "archive_missing", "archive_before")}
     if path == "/imaging/spectrogram/":
         body = sorted(body, key=lambda r: r["img_time"])
     return body
@@ -250,29 +285,39 @@ class LocalDbTest(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp(prefix="wf-localdb-")
         cls.a = Cluster(cls.tmp, "a", PORT_A)
         cls.b = Cluster(cls.tmp, "b", PORT_B)
+        cls.h = Cluster(cls.tmp, "h", PORT_H)
         cls.a.create("epic", "schema_node.sql")
         cls.b.create("epic", "schema_node.sql")
-        cls.a.create("head", "schema_global.sql")
+        cls.h.create("head", "schema_global.sql", archive_schema())
         cls.a.create("ref", "schema_node.sql", "schema_global.sql")
         sessions, pixels, digest, watchdog = make_data()
-        load(cls.a.connect("epic"), sessions, pixels, digest, bands={672})
+        node_a, archived = split_672(sessions, pixels, digest)
+        cls.split = node_a["split"]
+        load(cls.a.connect("epic"), node_a["sessions"], node_a["pixels"], node_a["digest"])
+        load(cls.h.connect("head"), archived["sessions"], archived["pixels"], archived["digest"], suffix="_archive")
         load(cls.b.connect("epic"), sessions, pixels, digest, bands={864, 128})
-        load(cls.a.connect("head"), {}, {}, {}, watchdog=watchdog)
+        load(cls.h.connect("head"), {}, {}, {}, watchdog=watchdog)
         load(cls.a.connect("ref"), sessions, pixels, digest, watchdog=watchdog)
 
         from fastapi.testclient import TestClient
-        from app.core.nodes import NodeSet, get_nodes, parse_nodes
+        from app.core.config import settings
+        from app.core.nodes import NodeSet, get_nodes
         from app.main import app
         cls.app, cls.deps = app, dict(nodes=get_nodes)
         cls.client = TestClient(app)
         cls.all_nodes = get_nodes()
-        cls.up_nodes = NodeSet(parse_nodes([f"a=127.0.0.1:{PORT_A}", f"b=127.0.0.1:{PORT_B}"], user=USER),
-                               schema="sevilleta")
+
+        def nodeset(**update):
+            return NodeSet.from_settings(settings.model_copy(update=update))
+        cls.up_nodes = nodeset(EPIC_NODES=[f"a=127.0.0.1:{PORT_A}", f"b=127.0.0.1:{PORT_B}"])
+        cls.no_archive = nodeset(EPIC_NODES=[f"a=127.0.0.1:{PORT_A}", f"b=127.0.0.1:{PORT_B}"],
+                                 EPIC_ARCHIVE_PORT=PORT_DEAD)
 
     @classmethod
     def tearDownClass(cls):
         cls.a.stop()
         cls.b.stop()
+        cls.h.stop()
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def get(self, nodes, path, params):
@@ -293,7 +338,7 @@ class LocalDbTest(unittest.TestCase):
         json.dump(reqs, open(req_file, "w"))
         script = os.path.join(self.tmp, "reference.py")
         open(script, "w").write(REFERENCE_SCRIPT)
-        env = os.environ | dict(POSTGRES_DB="ref", PYTHONPATH=os.path.join(orig, "server/backend"))
+        env = os.environ | dict(POSTGRES_DB="ref", POSTGRES_PORT=str(PORT_A), PYTHONPATH=os.path.join(orig, "server/backend"))
         subprocess.run([sys.executable, script, req_file, out_file], check=True, env=env,
                        cwd=os.path.join(orig, "server/backend"), capture_output=True)
         return json.load(open(out_file))
@@ -308,7 +353,7 @@ class LocalDbTest(unittest.TestCase):
                 self.assertEqual(r.status_code, 200, r.text)
                 body = r.json()
                 if isinstance(body, dict) and "nodes_missing" in body:
-                    self.assertEqual(body["nodes_missing"], [])
+                    self.assertEqual((body["nodes_missing"], body["archive_missing"]), ([], False))
                 self.assertEqual(normalise(path, body), normalise(path, want["body"]))
                 self.assertTrue(want["body"] or path.startswith("/frb"), "the reference returned nothing")
 
@@ -335,16 +380,65 @@ class LocalDbTest(unittest.TestCase):
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.json()["nodes_missing"], ["a", "c"])
             self.assertEqual(r.json()["bands_missing"], [672])
-            self.assertEqual({d["cfreq"] for d in r.json()["data"]}, {np.float32((864 + 31) * CHAN_BW_HZ).item()})
-            # a band on a node that is down: an empty spectrogram, flagged in the headers
+            # band 672 only as far as the archive holds it
+            band = np.float32((672 + 31) * CHAN_BW_HZ).item()
+            times = [d["img_time"] for d in r.json()["data"] if d["cfreq"] == band]
+            self.assertTrue(times)
+            self.assertTrue(all(t < (DAY + timedelta(hours=12)).isoformat() for t in times))
+            self.assertIn(np.float32((864 + 31) * CHAN_BW_HZ).item(), {d["cfreq"] for d in r.json()["data"]})
+            # a band on a node that is down, its older window from the archive, flagged in the headers
             r = self.get(self.all_nodes, "/imaging/spectrogram/", dict(
                 start_time=(DAY + timedelta(hours=1, minutes=30)).isoformat(),
                 end_time=(DAY + timedelta(hours=1, minutes=31)).isoformat(), source_name="sun", chan0=672,
                 pixel_positions="(0,0)"))
-            self.assertEqual((r.status_code, r.json()), (200, []))
+            self.assertEqual(r.status_code, 200)
+            ref = self.a.connect("ref").cursor()
+            ref.execute("select count(*) from sevilleta.epic_pixels where chan0 = 672 and source_name = 'sun' "
+                        "and pix_offset::text = '(0,0)' and img_time between %s and %s",
+                        (DAY + timedelta(hours=1, minutes=30), DAY + timedelta(hours=1, minutes=31)))
+            self.assertEqual(len(r.json()), ref.fetchone()[0])
             self.assertEqual(r.headers["X-EPIC-Bands-Missing"], "672")
         finally:
             self.a_epic_up()
+
+    def test_4_archive_down(self):
+        q = dict(source_name="sun", nrows=25, start_time=(DAY - timedelta(days=1)).isoformat(),
+                 end_time=(DAY + timedelta(days=2)).isoformat())
+        r = self.get(self.no_archive, "/imaging/sessions/", q)
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertTrue(body["archive_missing"])
+        # the oldest boundary of the nodes: b's oldest pixel
+        self.assertEqual(body["archive_before"], (DAY + timedelta(hours=1, minutes=30)).isoformat())
+        self.assertEqual(r.headers["X-EPIC-Archive-Missing"], body["archive_before"])
+        self.assertEqual(body["nodes_missing"], [])
+        full = self.get(self.up_nodes, "/imaging/sessions/", q).json()
+        self.assertLess(body["count"], full["count"])
+        # the sessions still on the nodes are all there
+        self.assertTrue({s["session_id"] for s in body["data"]} <= {s["session_id"] for s in full["data"]})
+        # a window only the archive holds: empty and flagged
+        r = self.get(self.no_archive, "/imaging/spectrogram/", dict(
+            start_time=(DAY + timedelta(hours=1, minutes=30)).isoformat(),
+            end_time=(DAY + timedelta(hours=1, minutes=31)).isoformat(), source_name="sun", chan0=672,
+            pixel_positions="(0,0)"))
+        self.assertEqual(r.json(), [])
+        self.assertIn("X-EPIC-Archive-Missing", r.headers)
+        # a recent window does not need the archive
+        r = self.get(self.no_archive, "/imaging/spectrogram/", dict(
+            start_time=(self.split + timedelta(minutes=20)).isoformat(),
+            end_time=(self.split + timedelta(minutes=21)).isoformat(), source_name="FRB-X", chan0=672,
+            pixel_positions="(0,0)"))
+        self.assertNotIn("X-EPIC-Archive-Missing", r.headers)
+
+    def test_5_frb_needs_the_archive(self):
+        from app.frb import pipeline
+        head = self.h.connect("head").cursor()
+        head.execute("delete from sevilleta.epic_frb_band where event_id = 4 and chan0 = 672")
+        with mock.patch.object(pipeline, "get_nodes", return_value=self.no_archive):
+            done = pipeline.run_worker()
+        self.assertIn((4, 672), done["deferred"])
+        head.execute("select count(*) from sevilleta.epic_frb_band where event_id = 4 and chan0 = 672")
+        self.assertEqual(head.fetchone()[0], 0)
 
     def a_epic_down(self):
         # node a's database refuses connections, the server stays up for the global database
@@ -357,7 +451,7 @@ class LocalDbTest(unittest.TestCase):
 
     def test_3_frb_pipeline(self):
         from app.frb import pipeline
-        head = self.a.connect("head").cursor()
+        head = self.h.connect("head").cursor()
         event_id = 4
         # node c is down and may hold any band no node is known for: those wait
         done = pipeline.run_worker()
@@ -379,7 +473,7 @@ class LocalDbTest(unittest.TestCase):
         orig = os.path.join(self.tmp, "main", "server/backend")
         if not os.path.exists(orig):
             self.reference([])
-        env = os.environ | dict(POSTGRES_DB="ref", PYTHONPATH=orig)
+        env = os.environ | dict(POSTGRES_DB="ref", POSTGRES_PORT=str(PORT_A), PYTHONPATH=orig)
         subprocess.run([sys.executable, "-m", "app.frb", "band", str(event_id), "672"], check=True, env=env, cwd=orig,
                        capture_output=True)
         cols = "status, n_time, coverage, peak_snr, peak_t_s, timeseries, z_image"

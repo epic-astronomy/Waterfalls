@@ -11,9 +11,11 @@ ended, whichever worker gets there first combines the bands, writes the
 summary and, if FRB_SLACK_NOTIFY is set, posts it to Slack once.
 
 The queue and the results are in the global database; the sessions and
-pixels of each band are in the database of the node that imaged it. A band
-whose node does not answer is left pending and tried again on the next run,
-and a worker takes the bands of its own node first.
+pixels of each band are in the database of the node that imaged it, or, once
+moved there, in the archive on the head node. Both are read, each over the
+time it may hold. A band whose node or archive does not answer is left
+pending and tried again on the next run, and a worker takes the bands of its
+own node first.
 """
 
 import json
@@ -39,15 +41,18 @@ SCHEMA = settings.EPIC_DATA_SCHEMA
 
 
 def _band_sessions(event: dict) -> tuple[dict[int, dict], list[str]]:
-    """The sessions of each band during the event's watch, from every node,
-    and the names of the nodes that did not answer"""
-    fan = get_nodes().query(
+    """The sessions of each band during the event's watch, from every node
+    and the archive, and the names of those that did not answer"""
+    nodes = get_nodes()
+    fan = nodes.query_tiers(
         f"select chan0, n_chan, chan_bw_hz, int_time, min(session_start), max(session_end) from {SCHEMA}.epic_img_metadata2 "
         "where source_name = :src and session_end > :t0 and session_start < :t1 group by chan0, n_chan, chan_bw_hz, int_time",
         dict(src=event["source"], t0=event["t_start"], t1=event["t_end"]),
+        since=event["t_start"],
     )
     out: dict[int, dict] = {}
-    for name, rows in sorted(fan.results.items()):
+    for name in fan.ordered():
+        rows = fan.results[name]
         for r in rows:
             band = out.get(r[0])
             if band is None:
@@ -57,7 +62,10 @@ def _band_sessions(event: dict) -> tuple[dict[int, dict], list[str]]:
                 band.update(start=min(band["start"], r[4]), end=max(band["end"], r[5]))
                 if name not in band["nodes"]:
                     band["nodes"].append(name)
-    return out, fan.missing
+    missing = list(fan.missing)
+    if fan.archive_missing:
+        missing.append(nodes.head.name)
+    return out, missing
 
 
 def expected_bands(event: dict) -> list[int]:
@@ -116,11 +124,13 @@ def process_band(session: Session, event_id: int, chan0: int) -> str:
     f_lo = chan0 * settings.CHAN_BW_HZ / 1e6
     meta = dict(f_lo_mhz=f_lo, f_hi_mhz=f_lo + 128 * settings.CHAN_BW_HZ / 1e6, dm_lo=event["dm"] - dm_half, dm_half=dm_half)
 
+    # a node that may hold the band, or the archive, did not answer: try
+    # again next run (without the archive a session's span may be cut short)
+    nodes = get_nodes()
+    held_by = {n.name for n in nodes.nodes_for_band(chan0)} | ({nodes.head.name} if nodes.head else set())
+    if held_by & set(missing):
+        raise NodeUnavailable(held_by & set(missing))
     if chan0 not in sessions:
-        # a node that may hold the band did not answer: try again next run
-        held_by = {n.name for n in get_nodes().nodes_for_band(chan0)}
-        if held_by & set(missing):
-            raise NodeUnavailable(held_by & set(missing))
         status, note = "no_session", "This band was not imaging the source during the watch."
         _store_product(session, event, dict(chan0=chan0, f_lo_mhz=f_lo, chan_bw_hz=2 * settings.CHAN_BW_HZ, n_chan=64,
                                             status=status, note=note))

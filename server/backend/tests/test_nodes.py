@@ -23,8 +23,8 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from app.core.nodes import (
-    MISSING_BANDS_HEADER, MISSING_NODES_HEADER, BandReader, Node, NodeSet, NodeUnavailable, parse_bands,
-    parse_nodes, sort_rows,
+    ARCHIVE_MISSING_HEADER, MISSING_BANDS_HEADER, MISSING_NODES_HEADER, ArchiveNames, BandReader, FanOut, Node,
+    NodeSet, NodeUnavailable, parse_bands, parse_nodes, sort_rows,
 )
 
 
@@ -39,20 +39,29 @@ class FakeResult(list):
         return self[0][0] if self else None
 
 
+class UndefinedTable(Exception):
+    pgcode = "42P01"
+
+
 class FakeConn:
     def __init__(self, node):
         self.node = node
 
     def execute(self, stmt, params=None):
         self.node.calls.append(str(stmt))
+        self.node.params.append(dict(params or {}))
         if self.node.delay:
             time.sleep(self.node.delay)
         if self.node.error_on_query:
-            raise RuntimeError("relation does not exist")
+            raise (UndefinedTable() if self.node.error_on_query == "undefined"
+                   else RuntimeError("relation does not exist"))
         for needle, rows in self.node.answers:
             if needle in str(stmt):
                 return FakeResult(rows(params) if callable(rows) else rows)
         return FakeResult([])
+
+    def rollback(self):
+        pass
 
     def close(self):
         pass
@@ -67,6 +76,7 @@ class FakeNode:
         self.delay = delay
         self.error_on_query = error_on_query
         self.calls: list[str] = []
+        self.params: list[dict] = []
         self.connects = 0
 
     def connect(self):
@@ -76,9 +86,22 @@ class FakeNode:
         return FakeConn(self)
 
 
-def make_nodeset(fakes: dict[str, FakeNode], **kw) -> NodeSet:
+def make_nodeset(fakes: dict[str, FakeNode], head: FakeNode | None = None, **kw) -> NodeSet:
+    """Fake nodes and, with `head`, a fake archive named "archive" holding the
+    default archive tables"""
     nodes = [Node(name=n, host=f"{n}.invalid") for n in fakes]
-    return NodeSet(nodes, engine_factory=lambda node, timeout: fakes[node.name], **kw)
+    every = dict(fakes)
+    if head is not None:
+        every["archive"] = head
+        kw.setdefault("archive_names", ArchiveNames("sevilleta", "sevilleta", {
+            t: f"{t}_archive" for t in ("epic_pixels", "epic_img_metadata2", "epic_files_metadata2", "epic_daily_digest")}))
+        kw["head"] = Node(name="archive", host="head.invalid", archive=True)
+    return NodeSet(nodes, engine_factory=lambda node, timeout: every[node.name], **kw)
+
+
+def oldest(t):
+    """A node's answer to the boundary query"""
+    return [("min(img_time)", [(t,)])]
 
 
 def bands(*pairs):
@@ -225,6 +248,32 @@ class RouteTest(unittest.TestCase):
         self.assertEqual([(s["chan0"], s["start_time"][11:13]) for s in r.json()["data"]],
                          [(672, "06"), (672, "04"), (672, "02"), (672, "00"), (864, "05"), (864, "03"), (864, "01")])
 
+    def test_sessions_with_the_archive(self):
+        t0 = datetime(2026, 9, 1)
+        S = namedtuple("S", "session_id chan0 n_chan n_pol chan_bw_hz int_time start_time end_time")
+        new = [S(**session_row(t0 + timedelta(days=d), 672)) for d in (20, 21)]
+        old = [S(**session_row(t0 + timedelta(days=d), 672)) for d in (1, 2)]
+        # the archive holds the old sessions and, mid-move, a copy of one on the node
+        a = FakeNode(bands(672) + oldest(t0 + timedelta(days=20)) + [("epic_img_metadata2", new)])
+        head = FakeNode([("epic_img_metadata2_archive", old + new[:1])])
+        ns = make_nodeset(dict(a=a), head=head)
+        self.app.dependency_overrides[self.deps["nodes"]] = lambda: ns
+        q = dict(start_time="2026-08-01T00:00:00", end_time="2026-10-01T00:00:00", source_name="sun", nrows=10)
+        body = self.client.get("/api/v1/imaging/sessions/", params=q).json()
+        self.assertEqual(body["count"], 4)
+        self.assertEqual([s["start_time"][:10] for s in body["data"]], ["2026-09-22", "2026-09-21", "2026-09-03", "2026-09-02"])
+        self.assertFalse(body["archive_missing"])
+        head.down = True
+        ns._down_until.clear()
+        r = self.client.get("/api/v1/imaging/sessions/", params=q)
+        self.assertEqual(r.json()["count"], 2)
+        self.assertTrue(r.json()["archive_missing"])
+        self.assertEqual(r.json()["archive_before"], "2026-09-21T00:00:00")
+        self.assertEqual(r.headers[ARCHIVE_MISSING_HEADER], "2026-09-21T00:00:00")
+        # a recent range does not need the archive
+        r = self.client.get("/api/v1/imaging/sessions/", params=q | dict(start_time="2026-09-25T00:00:00"))
+        self.assertFalse(r.json()["archive_missing"])
+
     def test_daily_digest_merged(self):
         D = namedtuple("D", "img_time stokes_i stokes_v cfreq")
         t = datetime(2026, 10, 1, 12)
@@ -261,6 +310,115 @@ class RouteTest(unittest.TestCase):
         self.assertEqual(r.json(), [])
         self.assertEqual(r.headers[MISSING_NODES_HEADER], "b")
         self.assertEqual(r.headers[MISSING_BANDS_HEADER], "864")
+
+
+T_B = datetime(2026, 10, 1)  # node a's oldest row: older data are in the archive
+OVERLAP = timedelta(hours=1)
+
+
+class ArchiveTest(unittest.TestCase):
+    def test_statement_names(self):
+        from sqlalchemy import select
+        from sqlalchemy.dialects import postgresql
+        from app.models.epic_data import epic_daily_digest_table, epic_img_metadata, epic_pixels
+        names = ArchiveNames("sevilleta", "arch", {"epic_pixels": "epic_pixels_archive",
+                                                   "epic_img_metadata2": "sessions_old"})
+        stmt = select(epic_pixels.img_time).where(epic_pixels.chan0 == 672)
+        sql = str(names.statement(stmt).compile(dialect=postgresql.dialect()))
+        self.assertIn("FROM arch.epic_pixels_archive", sql)
+        self.assertIn("arch.epic_pixels_archive.chan0", sql)
+        self.assertNotIn("sevilleta.epic_pixels ", sql + " ")
+        # the node statement is unchanged
+        self.assertIn("FROM sevilleta.epic_pixels", str(stmt.compile(dialect=postgresql.dialect())))
+        self.assertIn("arch.sessions_old", str(names.statement(select(epic_img_metadata.chan0))))
+        # a table that is not archived: nothing to ask the archive
+        self.assertIsNone(names.statement(select(epic_daily_digest_table.cfreq)))
+        self.assertEqual(names.sql("select * from sevilleta.epic_pixels where 1 = 1"),
+                         "select * from arch.epic_pixels_archive where 1 = 1")
+        self.assertIsNone(names.sql("select * from sevilleta.epic_daily_digest"))
+        self.assertIsNone(names.sql("select 1"))
+
+    def test_rows_once_nodes_first(self):
+        R = namedtuple("R", "img_time v blob")
+        fan = FanOut(results={"archive": [R(1, "old", b"x"), R(2, "a", b"y")], "a": [R(2, "a", b"z"), R(3, "a", b"w")]},
+                     archive_name="archive")
+        self.assertEqual([(r.img_time, r.blob) for r in fan.rows()], [(2, b"z"), (3, b"w"), (1, b"x")])
+        self.assertEqual(len(fan.rows(key=lambda r: r.img_time)), 3)
+
+    def test_boundary_decides_when_the_archive_is_read(self):
+        head = FakeNode([("epic_pixels_archive", [(T_B - timedelta(days=2), "archive")])])
+        a = FakeNode(oldest(T_B) + bands(672) + [("epic_pixels", [(T_B + timedelta(days=1), "node")])])
+        ns = make_nodeset(dict(a=a), head=head, overlap_s=OVERLAP.total_seconds())
+        self.assertEqual(ns.archive_until(ns.nodes), T_B + OVERLAP)
+        self.assertFalse(ns.archive_needed(ns.nodes, T_B + 2 * OVERLAP))
+        self.assertTrue(ns.archive_needed(ns.nodes, T_B))
+        self.assertTrue(ns.archive_needed(ns.nodes, None))
+        calls = []
+
+        def window(t0, t1):
+            calls.append((t0, t1))
+            return f"select img_time, v from sevilleta.epic_pixels where t >= '{t0}' and t <= '{t1}'"
+        # a recent window: the node only
+        fan = ns.query_range(window, 672, T_B + timedelta(days=1), T_B + timedelta(days=2))
+        self.assertEqual(list(fan.results), ["a"])
+        # a window across the boundary: the node over all of it, the archive up to the boundary plus the overlap
+        calls.clear()
+        fan = ns.query_range(window, 672, T_B - timedelta(days=3), T_B + timedelta(days=2))
+        self.assertEqual(calls, [(T_B - timedelta(days=3), T_B + timedelta(days=2)), (T_B - timedelta(days=3), T_B + OVERLAP)])
+        self.assertIn("epic_pixels_archive", head.calls[-1])
+        self.assertEqual([r[1] for r in fan.rows()], ["node", "archive"])
+
+    def test_node_without_data_or_mode_none_reads_the_archive(self):
+        ns = make_nodeset(dict(a=FakeNode(oldest(None))), head=FakeNode())
+        self.assertTrue(ns.archive_needed(ns.nodes, datetime(2030, 1, 1)))
+        ns = make_nodeset(dict(a=FakeNode(oldest(T_B))), head=FakeNode(), boundary_mode="none")
+        self.assertTrue(ns.archive_needed(ns.nodes, datetime(2030, 1, 1)))
+
+    def test_catalogue_boundary(self):
+        head = FakeNode([("epic_archive_catalogue", [("a", T_B), (864, T_B - timedelta(days=5))])])
+        ns = make_nodeset(dict(a=FakeNode(bands(672)), b=FakeNode(bands(864)), c=FakeNode(bands(1440))), head=head,
+                          boundary_mode="catalogue", overlap_s=0,
+                          catalogue_sql="select node, max(t_end) from {schema}.epic_archive_catalogue group by node")
+        self.assertEqual(ns.boundaries(), dict(a=T_B, b=T_B - timedelta(days=5), c=datetime.min))
+        self.assertTrue(ns.archive_needed(ns.nodes_for_band(864), T_B - timedelta(days=6)))
+        self.assertFalse(ns.archive_needed(ns.nodes_for_band(864), T_B - timedelta(days=4)))
+        # nothing archived from c yet
+        self.assertFalse(ns.archive_needed(ns.nodes_for_band(1440), datetime(2000, 1, 1)))
+
+    def test_archive_down_or_without_the_table(self):
+        head = FakeNode(down=True)
+        ns = make_nodeset(dict(a=FakeNode(oldest(T_B) + bands(672))), head=head)
+        fan = ns.query_tiers("select * from sevilleta.epic_img_metadata2", since=T_B - timedelta(days=1))
+        self.assertEqual((fan.missing, fan.archive_missing, fan.archive_before), ([], True, T_B))
+        headers = {}
+        fan.set_headers(namedtuple("Resp", "headers")(headers))
+        self.assertEqual(headers, {ARCHIVE_MISSING_HEADER: T_B.isoformat()})
+        ns = make_nodeset(dict(a=FakeNode(oldest(T_B))), head=FakeNode(error_on_query="undefined"))
+        fan = ns.query_tiers("select * from sevilleta.epic_img_metadata2")
+        self.assertFalse(fan.archive_missing)
+        self.assertEqual(fan.results["archive"], [])
+
+    def test_band_reader_splits_by_time(self):
+        head = FakeNode([("epic_pixels_archive", [(T_B - timedelta(minutes=1), 0, 0)])])
+        a = FakeNode(oldest(T_B) + bands(672) + [("epic_pixels", [(T_B, 0, 0), (T_B + timedelta(minutes=1), 0, 0)])])
+        ns = make_nodeset(dict(a=a), head=head, overlap_s=OVERLAP.total_seconds())
+        sql = "select img_time, x, y from sevilleta.epic_pixels where img_time >= :t0 and img_time < :t1"
+        with BandReader(ns, 672) as reader:
+            recent = reader.execute(sql, dict(t0=T_B + 2 * OVERLAP, t1=T_B + 3 * OVERLAP))
+            self.assertFalse(head.calls)
+            rows = reader.execute(sql, dict(t0=T_B - OVERLAP, t1=T_B + 3 * OVERLAP))
+        self.assertEqual(len(recent), 2)
+        self.assertEqual(head.params[-1]["t1"], T_B + OVERLAP)
+        self.assertEqual([r[0] for r in rows], [T_B - timedelta(minutes=1), T_B, T_B + timedelta(minutes=1)])
+        head.down = True
+        ns.boundaries()
+        with self.assertRaises(NodeUnavailable) as e:
+            with BandReader(ns, 672) as reader:
+                reader.execute(sql, dict(t0=T_B - OVERLAP, t1=T_B))
+        self.assertEqual(e.exception.names, ["archive"])
+        with BandReader(ns, 672, strict=False) as reader:
+            self.assertEqual(len(reader.execute(sql, dict(t0=T_B - OVERLAP, t1=T_B))), 2)
+        self.assertEqual((reader.fan_out().archive_missing, reader.fan_out().archive_before), (True, T_B))
 
 
 class PipelineTest(unittest.TestCase):

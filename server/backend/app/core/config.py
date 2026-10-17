@@ -107,6 +107,45 @@ class Settings(BaseSettings):
     EPIC_NODE_BANDS_CACHE_S: float = 300.0
     # the FRB analysis reads long windows of pixels from the nodes
     FRB_NODE_STATEMENT_TIMEOUT_MS: int = 600000
+
+    # ---- Archive tier: older per-node data on the head node ----
+    # A curator moves older partitions of the per-node tables into a
+    # PostgreSQL on the head node. Every name the back end assumes about it is
+    # here, to be aligned with the curator's final design. The connection
+    # fields left blank (or 0) take the global database's (POSTGRES_*).
+    EPIC_ARCHIVE_ENABLED: bool = True
+    EPIC_ARCHIVE_HOST: str = ""
+    EPIC_ARCHIVE_PORT: int = 0
+    EPIC_ARCHIVE_DB: str = ""
+    EPIC_ARCHIVE_USER: str = ""
+    EPIC_ARCHIVE_PASSWORD: str = ""
+    EPIC_ARCHIVE_SCHEMA: str = "sevilleta"
+    # node table = archive table, with the same columns (the band column,
+    # chan0 or cfreq, included); a node table not listed is not archived
+    EPIC_ARCHIVE_TABLES: Annotated[list[str] | str, BeforeValidator(parse_list)] = [
+        "epic_pixels=epic_pixels_archive",
+        "epic_img_metadata2=epic_img_metadata2_archive",
+        "epic_files_metadata2=epic_files_metadata2_archive",
+        "epic_daily_digest=epic_daily_digest_archive",
+    ]
+    # Where the node's data begin, below which the archive must be read:
+    #   node_oldest  the oldest row of EPIC_ARCHIVE_BOUNDARY_TABLE.column on
+    #                each node (min of an indexed time column)
+    #   catalogue    EPIC_ARCHIVE_CATALOGUE_SQL on the head, returning rows of
+    #                (node name or chan0, archived up to)
+    #   none         read the archive for every request
+    EPIC_ARCHIVE_BOUNDARY: Literal["node_oldest", "catalogue", "none"] = "node_oldest"
+    EPIC_ARCHIVE_BOUNDARY_TABLE: str = "epic_pixels.img_time"
+    EPIC_ARCHIVE_CATALOGUE_SQL: str = (
+        "select node, max(t_end) from {schema}.epic_archive_catalogue group by node"
+    )
+    EPIC_ARCHIVE_BOUNDARY_CACHE_S: float = 120.0
+    # the archive is also read this far above the boundary, so a partition
+    # moved after the boundary was cached is still found (rows in both tiers
+    # are returned once)
+    EPIC_ARCHIVE_OVERLAP_S: float = 86400.0
+    # the archive's name in the logs and in the response flags
+    EPIC_ARCHIVE_NAME: str = "archive"
     # matches the cadence of the long integrations behind the daily digest
     MAX_SPECTROGRAM_PERIOD_S: int = 180
     # CHIME/FRB watches last until the burst has crossed the lowest imaged

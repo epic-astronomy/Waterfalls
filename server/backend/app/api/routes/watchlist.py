@@ -7,7 +7,7 @@ from sqlmodel import select, func, Session, insert, update
 
 from app.api.deps import UserDep, WatchListPagiDep
 from app.api.deps import SessionDep, NodesDep, Pagination
-from app.core.nodes import NodeSet
+from app.core.nodes import FanOut, NodeSet
 from app.models.epic_data import (
     epic_watchdog,
     epic_watchdog_public,
@@ -102,7 +102,7 @@ class WatchListRow(BaseModel):
 RECORDING_WINDOW = timedelta(minutes=10)
 
 
-def data_status(nodes: NodeSet, rows) -> tuple[dict[int, str | None], list[str], list[int]]:
+def data_status(nodes: NodeSet, rows) -> tuple[dict[int, str | None], FanOut]:
     """The data status of each watch-list entry, from the imaging sessions
     on the nodes that overlap its watch, and the nodes and bands that did not
     answer. The watch list and the sessions are in different databases, so
@@ -110,9 +110,9 @@ def data_status(nodes: NodeSet, rows) -> tuple[dict[int, str | None], list[str],
     is no data cannot be known and is left blank."""
     names = list({w.source for w in rows})
     if not names:
-        return {}, [], []
+        return {}, FanOut()
     spans: dict[str, list] = {}
-    fan = nodes.query(
+    fan = nodes.query_tiers(
         select(epic_img_metadata.source_name, epic_img_metadata.session_start, epic_img_metadata.session_end)
         .where(epic_img_metadata.source_name.in_(names))
         .where(epic_img_metadata.chan0 == func.any_(settings.OBS_CHANS))
@@ -129,9 +129,9 @@ def data_status(nodes: NodeSet, rows) -> tuple[dict[int, str | None], list[str],
             out[w.id] = "recording" if any(b > now - RECORDING_WINDOW for _, b in mine) else "not_recording"
         else:
             out[w.id] = "observed" if mine else "not_observed"
-        if fan.missing and out[w.id] in ("not_recording", "not_observed"):
+        if (fan.missing or fan.archive_missing) and out[w.id] in ("not_recording", "not_observed"):
             out[w.id] = None
-    return out, fan.missing, fan.bands_missing
+    return out, fan
 
 
 class WatchListPage(BaseModel):
@@ -140,6 +140,8 @@ class WatchListPage(BaseModel):
     # nodes whose sessions could not be read, and their bands (chan0)
     nodes_missing: list[str] = []
     bands_missing: list[int] = []
+    archive_missing: bool = False
+    archive_before: datetime | None = None
 
 
 @router.get("/all/", response_model=WatchListPage)
@@ -184,9 +186,9 @@ def get_all_sources(
         .limit(pagination.limit)
     )
     rows = session.exec(stmnt).all()
-    status, missing, bands = data_status(nodes, [w for w, _, _ in rows])
+    status, fan = data_status(nodes, [w for w, _, _ in rows])
     data = [WatchListRow(**w.model_dump(), category=c, origin=o, data_status=status.get(w.id)) for w, c, o in rows]
-    return WatchListPage(data=data, count=count, nodes_missing=missing, bands_missing=bands)
+    return WatchListPage(data=data, count=count, **fan.flags())
 
 
 @router.get("/source/{source_id}", response_model=WatchListRow)
