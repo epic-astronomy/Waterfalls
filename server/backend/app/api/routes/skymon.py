@@ -86,7 +86,7 @@ def nodes():
 
 @router.get("/candidates")
 def candidates(since_h: float = Query(24.0, ge=0, le=24 * 30),
-               cls: str | None = Query(None, pattern="^(candidate|injection|rfi)$"),
+               cls: str | None = Query(None, pattern="^(candidate|injection|rfi|known|followup|context)$"),
                limit: int = Query(500, ge=1, le=5000)):
     """Recent candidates of all monitors, newest first"""
     since = time.time() - since_h * 3600
@@ -177,7 +177,7 @@ def _combiner(path: str):
 
 @router.get("/events")
 def events(since_h: float = Query(24.0, ge=0, le=24 * 30),
-           status: str | None = Query(None, pattern="^(pending|confirmed|single_band|unconfirmable)$"),
+           status: str | None = Query(None, pattern="^(pending|confirmed|band_limited|implausible|unconfirmable|terrestrial)$"),
            limit: int = Query(200, ge=1, le=2000)):
     """Events of the combiner: candidates checked across bands. null if no combiner answers"""
     q = urllib.parse.urlencode({k: v for k, v in dict(since=time.time() - since_h * 3600,
