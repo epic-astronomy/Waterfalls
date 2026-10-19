@@ -138,6 +138,47 @@ def candidate(node: str, cid: str):
     return c
 
 
+def _b64(a) -> str:
+    return base64.b64encode(np.ascontiguousarray(a, dtype=np.float32).tobytes()).decode()
+
+
+@router.get("/{node}/candidates/{cid}/data")
+def candidate_data(node: str, cid: str):
+    """
+    The data a monitor kept with a candidate (its npz): the pixel's dynamic
+    spectrum over the burst's sweep at the search resolution, the DM-time
+    plane, and the 10 s accumulation of the 30 min before. Arrays are base64
+    little-endian float32, [row][column] as named.
+    """
+    url = _node_url(node)
+    q = urllib.parse.quote(cid)
+    try:
+        c = _get(f"{url}/api/candidates/{q}", settings.SKYMON_TIMEOUT_S)
+        body = _get(f"{url}/api/candidates/{q}/npz", settings.SKYMON_PIXEL_TIMEOUT_S, raw=True)
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=404 if e.code == 404 else 502, detail="no data for this candidate")
+    except Exception:
+        raise HTTPException(status_code=503, detail="monitor unavailable")
+    with np.load(io.BytesIO(body)) as z:
+        f = z.files
+        out = dict(freqs_mhz=z["freqs_mhz"].tolist())
+        if "dynspec" in f:  # [channel][time]
+            out.update(dynspec=_b64(z["dynspec"]), dynspec_shape=list(z["dynspec"].shape),
+                       dynspec_t=z["dynspec_t"].tolist())
+        if "dmt" in f:  # [dm][time], on the dynamic spectrum's times
+            out.update(dmt=_b64(z["dmt"]), dmt_shape=list(z["dmt"].shape), dmt_dm=z["dmt_dm"].tolist())
+        if "accum" in f:  # [time][channel]
+            out.update(accum=_b64(z["accum"]), accum_shape=list(z["accum"].shape),
+                       accum_t=z["accum_t"].tolist())
+        if "tier_images" in f and "image_s" in f:
+            out["dt_s"] = float(z["tier_images"]) * float(z["image_s"])
+    for k in ("files", "burst_fit"):
+        c.pop(k, None)
+    c["node"] = node
+    out["candidate"] = c
+    return out
+
+
 _skymaps: dict[tuple[str, int], tuple[float, dict]] = {}
 
 

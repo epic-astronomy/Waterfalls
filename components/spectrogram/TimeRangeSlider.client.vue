@@ -6,9 +6,15 @@ import type { PropType } from 'vue'
 // model is the selected [start, end] in UTC ms, or null for everything.
 const range = defineModel<[number, number] | null>({ default: null })
 const props = defineProps({
-  times: { type: Array as PropType<number[]>, required: true }, // UTC ms, ascending
-  values: { type: Array as PropType<number[]>, required: true }, // NaN for gaps
+  times: { type: Array as PropType<number[]>, default: () => [] }, // UTC ms, ascending
+  values: { type: Array as PropType<number[]>, default: () => [] }, // NaN for gaps
   minSpanMs: { type: Number, default: 5 * 60e3 },
+  // labels to the second, for windows of minutes
+  seconds: { type: Boolean, default: false },
+  // the button that shows everything again
+  fullLabel: { type: String, default: 'Full day' },
+  // height of the track in px
+  height: { type: Number, default: 42 },
   // the extent of the data, if wider than the curve's samples
   start: { type: Number, default: undefined },
   end: { type: Number, default: undefined }
@@ -99,13 +105,15 @@ function key(e: KeyboardEvent, which: 'lo' | 'hi') {
 
 // labels in the time zone chosen on the page
 const tz = useTimeZone()
-const hhmm = (t: number) => tz.clock(t).slice(0, 5)
+const hhmm = (t: number) => props.seconds ? tz.clock(t) : tz.clock(t).slice(0, 5)
 </script>
 
 <template>
   <div class="select-none">
-    <div ref="track" class="relative h-[42px] rounded-md bg-gray-50 dark:bg-gray-800/60 ring-1 ring-gray-200 dark:ring-gray-700 touch-none"
+    <div ref="track" :style="{ height: height + 'px' }" class="relative rounded-md bg-gray-50 dark:bg-gray-800/60 ring-1 ring-gray-200 dark:ring-gray-700 touch-none"
       @pointerdown.self="jump">
+      <!-- anything drawn under the window, in the same time span as the track -->
+      <div class="absolute inset-0 overflow-hidden rounded-md pointer-events-none"><slot name="background" :t0="t0" :t1="t1" /></div>
       <svg class="absolute inset-0 h-full w-full pointer-events-none" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">
         <path :d="paths.area" class="fill-primary-500/15 dark:fill-primary-400/20" />
         <path :d="paths.line" fill="none" vector-effect="non-scaling-stroke" stroke-width="1.5" class="stroke-primary-600 dark:stroke-primary-400" />
@@ -131,7 +139,7 @@ const hhmm = (t: number) => tz.clock(t).slice(0, 5)
       <span>{{ hhmm(t0) }}</span>
       <span class="flex items-center gap-2">
         <span class="font-medium text-gray-700 dark:text-gray-200">{{ hhmm(sel[0]) }} to {{ hhmm(sel[1]) }} {{ tz.zoneName(sel[0]) }}</span>
-        <UButton v-if="range" size="2xs" color="gray" variant="ghost" label="Full day" @click="range = null" />
+        <UButton v-if="range" size="2xs" color="gray" variant="ghost" :label="fullLabel" @click="range = null" />
       </span>
       <span>{{ hhmm(t1) }}</span>
     </div>

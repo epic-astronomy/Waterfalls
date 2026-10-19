@@ -43,7 +43,7 @@ async function loadNodes() {
 // events of the combiner: candidates checked in every band that could see them
 interface BandState {
   state?: string, f_lo?: number, f_hi?: number, el_at_arrival?: number, predicted_t_bottom?: number,
-  reason?: string, candidate?: { snr: number, dm: number, fluence_jy_ms?: number | null },
+  reason?: string, candidate?: { id?: string, snr: number, dm: number, fluence_jy_ms?: number | null },
   followup?: { snr: number, dm: number, fluence_jy_ms?: number | null }
 }
 interface Solar { type: string, cls?: string | null, begin: string, max?: string | null, end?: string | null }
@@ -130,8 +130,11 @@ function fluenceText(f: number) {
 }
 function showEvent(e: Ev) {
   if (e.ra == null || e.dec == null || e.dm == null) return
-  const n = Object.keys(e.bands ?? {}).find(b => e.bands[b].state == 'detected') ?? node.value
-  showCandidate({ node: n, ra: e.ra, dec: e.dec, t_inf: e.t_inf, dm: e.dm } as Cand)
+  // the data kept by the band that detected it, else the live pixel with the burst's track
+  const dataId = (b?: BandState & { data_id?: string }) => b?.candidate?.id ?? b?.data_id
+  const n = Object.keys(e.bands ?? {}).find(b => e.bands[b].state == 'detected' && dataId(e.bands[b]))
+    ?? Object.keys(e.bands ?? {}).find(b => dataId(e.bands[b])) ?? node.value
+  showCandidate({ node: n, id: n ? dataId(e.bands[n]) : undefined, ra: e.ra, dec: e.dec, t_inf: e.t_inf, dm: e.dm } as Cand)
 }
 const expanded = ref<string | null>(null)
 
@@ -170,6 +173,9 @@ const selectedHpix = computed(() => {
 const raInput = ref(ra.value != null ? ra.value.toFixed(3) : '')
 const decInput = ref(dec.value != null ? dec.value.toFixed(3) : '')
 const mark = ref<{ tInf: number, dm: number } | null>(null)
+// a candidate whose kept data are shown instead of the live pixel
+const openCand = ref<{ node: string, id: string } | null>(typeof route.query.cand == 'string' && route.query.cand.includes(':')
+  ? { node: route.query.cand.split(':')[0], id: route.query.cand.split(':').slice(1).join(':') } : null)
 const skyMap = ref<{ centreOn: (ra: number, dec: number) => void } | null>(null)
 const positionError = computed(() => {
   if (raInput.value === '' && decInput.value === '') return ''
@@ -189,11 +195,13 @@ function showPosition() {
   if (positionError.value || raInput.value === '' || decInput.value === '') return
   setPosition(Number(raInput.value), Number(decInput.value))
   mark.value = null
+  openCand.value = null
   skyMap.value?.centreOn(ra.value!, dec.value!)
 }
 function onPick(p: { hpix: number, nside: number, ra: number, dec: number }) {
   setPosition(p.ra, p.dec, p.hpix)
   mark.value = null
+  openCand.value = null
 }
 function selectNode(n: string) {
   if (n == node.value) return
@@ -204,11 +212,13 @@ function showCandidate(c: Cand) {
   if (c.node) selectNode(c.node)
   setPosition(c.ra, c.dec)
   mark.value = { tInf: c.t_inf, dm: c.dm }
+  openCand.value = c.node && c.id ? { node: c.node, id: c.id } : null
   skyMap.value?.centreOn(c.ra, c.dec)
 }
-watch([node, ra, dec, sinceH, showInjections], () => {
+watch([node, ra, dec, sinceH, showInjections, openCand], () => {
   const q: Record<string, string> = {}
   if (node.value) q.node = node.value
+  if (openCand.value) q.cand = `${openCand.value.node}:${openCand.value.id}`
   if (ra.value != null && dec.value != null) { q.ra = ra.value.toFixed(4); q.dec = dec.value.toFixed(4) }
   if (sinceH.value != 24) q.since_h = String(sinceH.value)
   if (showInjections.value) q.inj = '1'
@@ -348,8 +358,9 @@ useSeoMeta({
     <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
       <template #header>
         <div class="flex flex-wrap items-center gap-3">
-          <span class="font-medium">Spectrogram</span>
-          <span v-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ selNode.node }}</span>
+          <span class="font-medium">{{ openCand ? 'Candidate' : 'Spectrogram' }}</span>
+          <span v-if="openCand" class="text-sm text-gray-500 dark:text-gray-400">{{ openCand.node }}, {{ openCand.id }}</span>
+          <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ selNode.node }}, live pixel</span>
           <div class="flex-1" />
           <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
           <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
@@ -357,7 +368,9 @@ useSeoMeta({
           <span v-if="positionError" class="text-xs text-red-500">{{ positionError }}</span>
         </div>
       </template>
-      <SpectrogramSkymonSpectrogram v-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
+      <SpectrogramSkymonCandidate v-if="openCand" :node="openCand.node" :id="openCand.id"
+        @live="openCand = null; mark = null" />
+      <SpectrogramSkymonSpectrogram v-else-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
         :hpix="pickedHpix" :dt-image="selNode?.band?.dt" :t-inf="mark?.tInf" :dm="mark?.dm" />
       <p v-else class="text-center text-gray-500 dark:text-gray-400 py-6">
         Click a pixel on the sky, enter a position, or open the spectrogram of a candidate.
