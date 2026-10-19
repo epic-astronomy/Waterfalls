@@ -189,6 +189,22 @@ def candidate_data(node: str, cid: str):
     return out
 
 
+_pulsars: tuple[float, list] | None = None
+
+
+@router.get("/pulsars")
+def pulsars():
+    """The pulsars the monitors label single pulses of (the first monitor to answer; cached 10 min)"""
+    global _pulsars
+    if _pulsars and time.time() - _pulsars[0] < 600:
+        return _pulsars[1]
+    for n, r in _ask_all("/api/pulsars", settings.SKYMON_TIMEOUT_S).items():
+        if isinstance(r, list) and r:
+            _pulsars = (time.time(), r)
+            return r
+    return []
+
+
 _skymaps: dict[tuple[str, int], tuple[float, dict]] = {}
 
 
@@ -244,9 +260,10 @@ def pixel(ra: float = Query(..., ge=0, lt=360), dec: float = Query(..., ge=-90, 
     base64 little-endian float32 (NaN where the position was not tracked).
     """
     nodes = {node: _node_url(node)} if node else _nodes()
-    params = dict(ra=ra, dec=dec, since=time.time() - hours * 3600)
+    # the span on the monitor's own clock (hours), and on ours for a monitor without it (since)
+    params = dict(ra=ra, dec=dec, since=time.time() - hours * 3600, hours=hours)
     if hpix is not None and node:  # a pixel picked on that monitor's own grid
-        params = dict(hpix=hpix, since=params["since"])
+        params = dict(hpix=hpix, since=params["since"], hours=hours)
     if fine:
         params["fine"] = 1
     futs = {n: _pool.submit(_pixel, u, params) for n, u in nodes.items()}

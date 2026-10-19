@@ -4,6 +4,7 @@
 // the zenith at the end of that span (north up, east left, as seen looking
 // up). It can be zoomed and panned; a click picks a pixel.
 import { ang2pixZ, npix, pix2radec, pixDeg } from '~/lib/healpix'
+import { CRAB_DATA_URL } from '~/lib/pulsars'
 
 interface SkyMap {
   node: string, nside: number, n: number, seconds: number, rows: number, interval_s: number,
@@ -18,6 +19,8 @@ const props = defineProps<{
   waiting?: boolean,
   selected?: number | null,
   markers?: Marker[],
+  // the pulsars the monitors know: label is drawn beside a small diamond
+  pulsars?: { ra: number, dec: number, label: string, icon: boolean }[],
   seconds?: number
 }>()
 const emit = defineEmits<{
@@ -43,6 +46,10 @@ const error = ref('')
 const stretch = useState<'asinh' | 'linear'>('skymon-map-stretch', () => 'asinh')
 const showGrid = useState('skymon-map-grid', () => true)
 const showLabels = useState('skymon-map-labels', () => true)
+const showPulsars = useState('skymon-map-pulsars', () => true)
+// the Crab pulsar's icon, drawn on the canvas once loaded
+const crabImg = import.meta.client ? Object.assign(new Image(), { src: CRAB_DATA_URL }) : null
+crabImg?.addEventListener('load', () => draw())
 // the primary beam makes the sky fall off towards the horizon; flattening
 // subtracts the median at each elevation (1° bins) so sources stand out
 const flatten = useState('skymon-map-flatten', () => true)
@@ -250,6 +257,29 @@ function render() {
       ctx.shadowBlur = 0
     }
   }
+  if (showPulsars.value) {
+    for (const p of props.pulsars ?? []) {
+      const q = mark(p.ra, p.dec)
+      if (!q) continue
+      const r = 4 * dpr
+      ctx.fillStyle = '#e879f9'
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)'
+      ctx.lineWidth = dpr
+      ctx.beginPath(); ctx.moveTo(q[0], q[1] - r); ctx.lineTo(q[0] + r, q[1]); ctx.lineTo(q[0], q[1] + r); ctx.lineTo(q[0] - r, q[1]); ctx.closePath()
+      ctx.fill(); ctx.stroke()
+      if (p.icon) {
+        // the Crab sits in Tau A: its icon goes below the nebula's label
+        if (crabImg?.complete) ctx.drawImage(crabImg, q[0] + 5 * dpr, q[1] + 2 * dpr, 20 * dpr, 20 * dpr)
+        continue
+      }
+      ctx.font = `${10 * dpr}px ui-sans-serif, system-ui, sans-serif`
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+      ctx.fillStyle = '#f5d0fe'
+      ctx.shadowColor = 'black'; ctx.shadowBlur = 3 * dpr
+      ctx.fillText(p.label, q[0] + 7 * dpr, q[1] + 6 * dpr)
+      ctx.shadowBlur = 0
+    }
+  }
   for (const mk of props.markers ?? []) {
     const q = mark(mk.ra, mk.dec)
     if (!q) continue
@@ -347,7 +377,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { ro?.disconnect(); clearInterval(timer); cancelAnimationFrame(raf) })
 watch(() => props.node, () => { map.value = null; raw = new Float32Array(0); values = raw; tracked = new Int32Array(0); draw(); load() })
-watch([() => props.selected, () => props.markers, stretch, showGrid, showLabels, colorMode], draw)
+watch([() => props.selected, () => props.markers, () => props.pulsars, stretch, showGrid, showLabels, showPulsars, colorMode], draw)
 watch(flatten, () => { prepare(); draw() })
 
 const spanText = computed(() => {
@@ -365,6 +395,7 @@ const spanText = computed(() => {
       <UCheckbox v-model="flatten" label="Flatten" title="Subtract the median at each elevation, which removes the fall of the primary beam towards the horizon" />
       <UCheckbox v-model="showGrid" label="Pixel grid" />
       <UCheckbox v-model="showLabels" label="Bright sources" />
+      <UCheckbox v-model="showPulsars" label="Pulsars" />
       <div class="flex flex-1 justify-end">
       <UButton size="2xs" variant="ghost" icon="i-heroicons-plus" aria-label="Zoom in" @click="zoomBy(1.6)" />
       <UButton size="2xs" variant="ghost" icon="i-heroicons-minus" aria-label="Zoom out" @click="zoomBy(1 / 1.6)" />

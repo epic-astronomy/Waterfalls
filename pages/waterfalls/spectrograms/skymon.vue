@@ -3,6 +3,7 @@
 // visible sky for dispersed bursts. This page shows the state of each
 // monitor, the candidates they found, and the spectrogram of any position.
 import { radec2pix } from '~/lib/healpix'
+import { hasIcon, pulsarLabel, type Pulsar } from '~/lib/pulsars'
 const rtConfig = useRuntimeConfig()
 const tz = useTimeZone()
 const route = useRoute()
@@ -25,7 +26,7 @@ interface Cand {
   id: string, node: string, cls: string, snr: number, dm: number, width_s: number, t_inf: number,
   utc_inf: string, ra: number, dec: number, el: number, tier: number, n_pix: number,
   f_lo_mhz: number, f_hi_mhz: number, injection_id?: string | null,
-  known_source?: { kind: string, name: string, sep_deg: number } | null,
+  known_source?: { kind: string, name: string, sep_deg: number, alias?: string | null, giant_pulse?: boolean } | null,
   flux?: { fluence_jy_ms: number, fluence_err_jy_ms: number | null } | null,
   rfi_reasons?: string[]
 }
@@ -238,6 +239,10 @@ const clsLabel: Record<string, string> = { candidate: 'Candidate', injection: 'T
 const clsColor: Record<string, string> = { candidate: 'amber', injection: 'sky', rfi: 'gray', known: 'violet' }
 const knownLabel: Record<string, string> = { solar: 'Sun', jovian: 'Jupiter', bright_source: '', pulsar: 'pulsar' }
 function clsText(c: Cand) {
+  if (c.cls == 'known' && c.known_source?.kind == 'pulsar') {
+    const ks = c.known_source
+    return ks.giant_pulse ? 'giant pulse' : 'single pulse'  // after the pulsar's name (SkymonPulsarName)
+  }
   if (c.cls == 'known' && c.known_source) {
     const k = knownLabel[c.known_source.kind]
     return k && k != c.known_source.name ? `${c.known_source.name} (${k})` : c.known_source.name
@@ -247,6 +252,28 @@ function clsText(c: Cand) {
 }
 const reasonLabel: Record<string, string> = { noise: 'high noise', rfi_rate: 'frequent RFI', sky_triggered: 'much of the sky triggered' }
 
+// pulsars: the list the monitors use, and their single pulses (class known) in the period
+const pulsars = ref<Pulsar[]>([])
+const pulses = ref<Cand[]>([])
+const pulsesPending = ref(true)
+async function loadPulsars() {
+  try { if (!pulsars.value.length) pulsars.value = await $fetch<Pulsar[]>(rtConfig.public.fastapiBase + '/skymon/pulsars') }
+  catch { pulsars.value = [] }
+  try {
+    const known = await $fetch<Cand[]>(rtConfig.public.fastapiBase + '/skymon/candidates', { query: { since_h: sinceH.value, cls: 'known', limit: 5000 } })
+    pulses.value = known.filter(c => c.known_source?.kind == 'pulsar')
+  } catch { pulses.value = [] }
+  finally { pulsesPending.value = false }
+}
+const pulsarRows = computed(() => pulsars.value.map(p => {
+  const mine = pulses.value.filter(c => c.known_source?.name == p.name)
+  const brightest = mine.reduce<Cand | null>((a, c) => !a || c.snr > a.snr ? c : a, null)
+  const last = mine.reduce<Cand | null>((a, c) => !a || c.t_inf > a.t_inf ? c : a, null)
+  return { p, n: mine.length, brightest, last }
+}).sort((a, b) => b.n - a.n || Number(!!b.p.giant_pulses) - Number(!!a.p.giant_pulses) || a.p.name.localeCompare(b.p.name)))
+const mapPulsars = computed(() => pulsars.value.map(p => ({ ra: p.ra_deg, dec: p.dec_deg, label: pulsarLabel(p.name), icon: hasIcon(p.name) })))
+watch(sinceH, loadPulsars)
+
 // refreshed every minute while the page is open (in the browser only)
 let timer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
@@ -255,7 +282,8 @@ onMounted(() => {
   loadNodes()
   loadCands()
   loadEvents()
-  timer = setInterval(() => { loadNodes(); loadCands(); loadEvents() }, 60000)
+  loadPulsars()
+  timer = setInterval(() => { loadNodes(); loadCands(); loadEvents(); loadPulsars() }, 60000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 
@@ -283,7 +311,7 @@ useSeoMeta({
             </span>
           </div>
         </template>
-        <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :waiting="!nodesLoaded" :selected="selectedHpix" :markers="markers"
+        <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :waiting="!nodesLoaded" :selected="selectedHpix" :markers="markers" :pulsars="mapPulsars"
           @select="onPick" @nside="n => mapNside = n" />
       </UCard>
 
@@ -375,6 +403,44 @@ useSeoMeta({
       <p v-else class="text-center text-gray-500 dark:text-gray-400 py-6">
         Click a pixel on the sky, enter a position, or open the spectrogram of a candidate.
       </p>
+    </UCard>
+
+    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
+      <template #header>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="font-medium">Pulsars</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">
+            single pulses found at the position and DM of a known pulsar, in the last {{ sinceOptions.find(o => o.value == sinceH)?.label ?? `${sinceH} hours` }}
+          </span>
+        </div>
+      </template>
+      <SpectrogramSkymonLoading v-if="pulsesPending" compact :messages="['Asking the monitors for their pulsars', 'Collecting the single pulses of each']" />
+      <div v-else class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-gray-500 dark:text-gray-400">
+            <tr>
+              <th class="px-2 py-1">Pulsar</th><th class="px-2 py-1 text-right">DM (pc cm⁻³)</th><th class="px-2 py-1 text-right">Period (s)</th>
+              <th class="px-2 py-1 text-right">Pulses</th><th class="px-2 py-1 text-right">Brightest S/N</th>
+              <th class="px-2 py-1">Last pulse ({{ tz.zoneName() }})</th><th class="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in pulsarRows" :key="r.p.name" class="border-t border-gray-200 dark:border-gray-800">
+              <td class="px-2 py-1">
+                <SpectrogramSkymonPulsarName :name="r.p.name" :alias="r.p.alias" :size="26" />
+                <span v-if="r.p.giant_pulses" class="ml-2 text-xs text-gray-500 dark:text-gray-400">giant pulses</span>
+              </td>
+              <td class="px-2 py-1 text-right tabular-nums">{{ r.p.dm.toFixed(2) }}</td>
+              <td class="px-2 py-1 text-right tabular-nums">{{ r.p.period_s != null ? r.p.period_s.toFixed(4) : '' }}</td>
+              <td class="px-2 py-1 text-right tabular-nums">{{ r.n || '' }}</td>
+              <td class="px-2 py-1 text-right tabular-nums">{{ r.brightest ? r.brightest.snr.toFixed(1) : '' }}</td>
+              <td class="px-2 py-1 font-mono">{{ r.last ? tz.dateTime(r.last.t_inf * 1000) : '' }}</td>
+              <td class="px-2 py-1"><UButton v-if="r.brightest" size="2xs" variant="outline" label="Brightest pulse" @click="showCandidate(r.brightest)" /></td>
+            </tr>
+            <tr v-if="!pulsarRows.length"><td colspan="7" class="px-2 py-3 text-center text-gray-500">No monitor answered with its pulsars.</td></tr>
+          </tbody>
+        </table>
+      </div>
     </UCard>
 
     <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
@@ -517,6 +583,8 @@ useSeoMeta({
               <td class="px-2 py-1 text-right">{{ c.el.toFixed(0) }}</td>
               <td class="px-2 py-1">
                 <UBadge :color="clsColor[c.cls]" variant="subtle" size="xs" :label="clsLabel[c.cls] ?? c.cls" />
+                <SpectrogramSkymonPulsarName v-if="c.cls == 'known' && c.known_source?.kind == 'pulsar'" class="ml-1 text-xs"
+                  :name="c.known_source.name" :alias="c.known_source.alias" :size="18" />
                 <span v-if="clsText(c)" class="ml-1 text-xs text-gray-500 dark:text-gray-400">{{ clsText(c) }}</span>
               </td>
               <td class="px-2 py-1"><UButton size="2xs" variant="outline" label="Spectrogram" @click="showCandidate(c)" /></td>

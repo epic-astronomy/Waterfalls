@@ -16,7 +16,7 @@ interface CandData {
     id: string, node: string, cls: string, snr: number, dm: number, dm_step?: number, width_s: number,
     t_inf: number, t_top?: number, t_bottom?: number, ra: number, dec: number, el: number, tier: number,
     f_lo_mhz: number, f_hi_mhz: number, injection_id?: string | null,
-    known_source?: { kind: string, name: string } | null, rfi_reasons?: string[],
+    known_source?: { kind: string, name: string, alias?: string | null, giant_pulse?: boolean } | null, rfi_reasons?: string[],
     flux?: { fluence_jy_ms: number, fluence_err_jy_ms?: number | null } | null,
     dm_arms?: { id: string, dm: number, snr: number, tier: number }[]
   },
@@ -402,7 +402,11 @@ onBeforeUnmount(() => {
           <span v-if="data?.injection" class="text-amber-600 dark:text-amber-400">
             injected at DM {{ data.injection.dm.toFixed(1) }} with S/N {{ data.injection.snr_target.toFixed(0) }}
           </span>
-          <span v-if="cand.known_source" class="text-gray-500 dark:text-gray-400">{{ cand.known_source.name }}</span>
+          <span v-if="cand.known_source?.kind == 'pulsar'">
+            <SpectrogramSkymonPulsarName :name="cand.known_source.name" :alias="cand.known_source.alias" :size="24" />
+            {{ cand.known_source.giant_pulse ? 'giant pulse' : 'single pulse' }}
+          </span>
+          <span v-else-if="cand.known_source" class="text-gray-500 dark:text-gray-400">{{ cand.known_source.name }}</span>
           <span v-if="cand.cls == 'rfi' && cand.rfi_reasons?.length" class="text-gray-500 dark:text-gray-400">{{ cand.rfi_reasons.join(', ') }}</span>
         </template>
         <div class="flex-1" />
