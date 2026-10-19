@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const route = useRoute()
 const appConfig = useAppConfig()
-const { isHelpSlideoverOpen } = useDashboard()
+const { isHelpSlideoverOpen, isSidebarHidden } = useDashboard()
 
 const links = [{
   id: 'home',
@@ -61,7 +61,9 @@ const groups = [{
 
 <template>
   <UDashboardLayout>
-    <UDashboardPanel :width="250" :resizable="{ min: 250, max: 300 }" collapsible>
+    <!-- hidden from the toolbar's button (PageToolbar); small screens keep the slide-over -->
+    <UDashboardPanel :width="250" :resizable="{ min: 250, max: 300 }" collapsible
+      :class="isSidebarHidden ? 'lg:!hidden' : ''">
       <UDashboardNavbar class="!border-transparent" :ui="{ left: 'flex-1' }">
         <template #left>
           <AppsDropdown />

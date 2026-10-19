@@ -8,6 +8,10 @@ const rtConfig = useRuntimeConfig()
 const tz = useTimeZone()
 const route = useRoute()
 const router = useRouter()
+// the lists, in tabs beside the viewer
+const tabs = [{ label: 'FRBs', slot: 'frbs' }, { label: 'Pulsars', slot: 'pulsars' }]
+const tab = ref(route.query.tab == 'pulsars' ? 1 : 0)
+const frbView = ref<'candidates' | 'events'>(route.query.view == 'events' ? 'events' : 'candidates')
 
 interface Node {
   node: string, up: boolean, error?: string,
@@ -216,10 +220,12 @@ function showCandidate(c: Cand) {
   openCand.value = c.node && c.id ? { node: c.node, id: c.id } : null
   skyMap.value?.centreOn(c.ra, c.dec)
 }
-watch([node, ra, dec, sinceH, showInjections, openCand], () => {
+watch([node, ra, dec, sinceH, showInjections, openCand, () => tab.value, () => frbView.value], () => {
   const q: Record<string, string> = {}
   if (node.value) q.node = node.value
   if (openCand.value) q.cand = `${openCand.value.node}:${openCand.value.id}`
+  if (tab.value == 1) q.tab = 'pulsars'
+  if (frbView.value == 'events') q.view = 'events'
   if (ra.value != null && dec.value != null) { q.ra = ra.value.toFixed(4); q.dec = dec.value.toFixed(4) }
   if (sinceH.value != 24) q.since_h = String(sinceH.value)
   if (showInjections.value) q.inj = '1'
@@ -233,7 +239,6 @@ const candCount = (n: Node) => n.candidates ? n.candidates.stored - n.candidates
 const dmReach = (n: Node) => n.tiers?.length ? Math.round(n.tiers[n.tiers.length - 1].dm_max) : null
 watch(sinceH, () => { loadCands(); loadEvents() })
 
-const pct = (x?: number | null) => x == null ? '' : `${Math.round(100 * x)}%`
 const fmt = (x?: number | null, d = 1) => x == null ? '' : x.toFixed(d)
 const clsLabel: Record<string, string> = { candidate: 'Candidate', injection: 'Test injection', rfi: 'RFI', known: 'Known source' }
 const clsColor: Record<string, string> = { candidate: 'amber', injection: 'sky', rfi: 'gray', known: 'violet' }
@@ -266,13 +271,47 @@ async function loadPulsars() {
   finally { pulsesPending.value = false }
 }
 const pulsarRows = computed(() => pulsars.value.map(p => {
-  const mine = pulses.value.filter(c => c.known_source?.name == p.name)
+  const mine = pulses.value.filter(c => c.known_source?.name == p.name).sort((a, b) => b.t_inf - a.t_inf)
   const brightest = mine.reduce<Cand | null>((a, c) => !a || c.snr > a.snr ? c : a, null)
   const last = mine.reduce<Cand | null>((a, c) => !a || c.t_inf > a.t_inf ? c : a, null)
-  return { p, n: mine.length, brightest, last }
+  return { p, n: mine.length, brightest, last, pulses: mine }
 }).sort((a, b) => b.n - a.n || Number(!!b.p.giant_pulses) - Number(!!a.p.giant_pulses) || a.p.name.localeCompare(b.p.name)))
+const showQuietPulsars = ref(false)
+const shownPulsarRows = computed(() => pulsarRows.value.filter(r => r.n || showQuietPulsars.value))
+const openPulsar = ref<string | null>(null)
 const mapPulsars = computed(() => pulsars.value.map(p => ({ ra: p.ra_deg, dec: p.dec_deg, label: pulsarLabel(p.name), icon: hasIcon(p.name) })))
 watch(sinceH, loadPulsars)
+
+// pulsars with pulses among the candidates shown: their DMs are marked on the DM-time overview
+const dmtPulsars = computed(() => {
+  const names = new Set(shownCands.value.filter(c => c.known_source?.kind == 'pulsar').map(c => c.known_source!.name))
+  return pulsars.value.filter(p => names.has(p.name)).map(p => ({ name: p.name, label: p.alias ?? p.name, dm: p.dm }))
+})
+// up and down (or j and k) step through the list into the viewer
+function onKey(e: KeyboardEvent) {
+  if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable="true"]')) return
+  const step = e.key == 'ArrowDown' || e.key == 'j' ? 1 : e.key == 'ArrowUp' || e.key == 'k' ? -1 : 0
+  if (!step) return
+  const list = tab.value == 1 ? (pulsarRows.value.find(r => r.p.name == openPulsar.value)?.pulses ?? []) : shownCands.value
+  if (!list.length || (tab.value == 0 && frbView.value != 'candidates')) return
+  const i = list.findIndex(c => isOpen(c))
+  const next = list[i < 0 ? 0 : Math.min(list.length - 1, Math.max(0, i + step))]
+  if (!next || (i >= 0 && list[i] === next)) return
+  e.preventDefault()
+  showCandidate(next)
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+const isOpen = (c: Cand) => openCand.value?.node == c.node && openCand.value?.id == c.id
+function openEvent(e: Ev) {
+  expanded.value = expanded.value == e.id ? null : e.id
+  if (expanded.value) showEvent(e)
+}
+// on narrow screens the viewer is below the lists: bring it into view
+const viewer = ref<HTMLElement>()
+watch(openCand, c => {
+  if (c && import.meta.client && window.innerWidth < 1280) nextTick(() => viewer.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+})
 
 // refreshed every minute while the page is open (in the browser only)
 let timer: ReturnType<typeof setInterval> | undefined
@@ -298,304 +337,293 @@ useSeoMeta({
 <template>
   <PageToolbar>
     <span class="text-sm text-gray-500 dark:text-gray-400">All-sky monitor</span>
+    <div class="flex items-center gap-2 text-sm">
+      <span class="text-gray-500 dark:text-gray-400">Period</span>
+      <USelect v-model="sinceH" :options="sinceOptions" size="xs" />
+    </div>
     <template #right><TimeZoneToggle /></template>
   </PageToolbar>
-  <UDashboardPanelContent class="space-y-4">
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-      <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-        <template #header>
-          <div class="flex items-center gap-2">
-            <span class="font-medium">Sky</span>
-            <span v-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">
-              seen by {{ selNode.node }}<template v-if="selNode.band"> at {{ selNode.band.f_lo.toFixed(2) }}–{{ selNode.band.f_hi.toFixed(2) }} MHz</template>, last 5 min
-            </span>
+  <UDashboardPanelContent>
+    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-3 items-start">
+      <!-- left: the sky, the monitors, and the lists -->
+      <div class="space-y-3 min-w-0">
+        <UCard :ui="{ body: { padding: 'p-2 sm:p-3' }, header: { padding: 'px-3 py-2 sm:px-4' } }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <span class="font-medium">Sky</span>
+              <span v-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">
+                seen by {{ selNode.node }}<template v-if="selNode.band"> at {{ selNode.band.f_lo.toFixed(2) }}–{{ selNode.band.f_hi.toFixed(2) }} MHz</template>, last 5 min
+              </span>
+            </div>
+          </template>
+          <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :waiting="!nodesLoaded" :selected="selectedHpix" :markers="markers" :pulsars="mapPulsars"
+            @select="onPick" @nside="n => mapNside = n" />
+        </UCard>
+
+        <UCard :ui="{ body: { padding: 'p-1 sm:p-2' }, header: { padding: 'px-3 py-2 sm:px-4' } }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <span class="font-medium">Monitors</span>
+              <span class="text-sm text-gray-500 dark:text-gray-400">select one to show its sky</span>
+              <div class="flex-1" />
+              <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="nodesPending" aria-label="Reload the monitors" @click="loadNodes" />
+            </div>
+          </template>
+          <SpectrogramSkymonLoading v-if="!nodesLoaded" compact :messages="[
+            'Asking the six monitors for their state',
+            'Collecting bands, tracked pixels and candidates',
+            'Waiting for the slower monitors to answer']" />
+          <div v-else class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="text-left text-gray-500 dark:text-gray-400">
+                <tr>
+                  <th class="px-2 py-1">Node</th><th class="px-2 py-1">State</th><th class="px-2 py-1">Band (MHz)</th>
+                  <th class="px-2 py-1 text-right">Pixels</th><th class="px-2 py-1 text-right">DM reach</th>
+                  <th class="px-2 py-1 text-right">Candidates</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="n in nodes" :key="n.node" class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
+                  :class="n.node == node ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+                  @click="selectNode(n.node)">
+                  <td class="px-2 py-1 font-mono">{{ n.node }}</td>
+                  <td class="px-2 py-1">
+                    <UBadge :color="!n.up ? 'red' : n.conditions?.latest?.disturbed ? 'orange' : 'green'" variant="subtle" size="xs"
+                      :label="!n.up ? 'Not answering' : n.conditions?.latest?.disturbed ? 'Disturbed' : 'Running'" />
+                  </td>
+                  <td class="px-2 py-1 tabular-nums whitespace-nowrap">{{ n.band ? `${n.band.f_lo.toFixed(2)}–${n.band.f_hi.toFixed(2)}` : '' }}</td>
+                  <td class="px-2 py-1 text-right tabular-nums">{{ n.tracked ?? '' }}</td>
+                  <td class="px-2 py-1 text-right tabular-nums" :title="dmReach(n) != null ? 'pc cm⁻³' : undefined">{{ dmReach(n) ?? '' }}</td>
+                  <td class="px-2 py-1 text-right tabular-nums">{{ candCount(n) ?? '' }}</td>
+                </tr>
+                <tr v-if="!nodes.length && !nodesPending"><td colspan="6" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
+              </tbody>
+            </table>
           </div>
-        </template>
-        <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :waiting="!nodesLoaded" :selected="selectedHpix" :markers="markers" :pulsars="mapPulsars"
-          @select="onPick" @nside="n => mapNside = n" />
-      </UCard>
+        </UCard>
 
-      <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-        <template #header>
-          <div class="flex items-center gap-2">
-            <span class="font-medium">Monitors</span>
-            <span class="text-sm text-gray-500 dark:text-gray-400">one per imaging band; select one to show its sky</span>
-            <div class="flex-1" />
-            <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="nodesPending" @click="loadNodes" />
-          </div>
-        </template>
-        <SpectrogramSkymonLoading v-if="!nodesLoaded" :messages="[
-          'Asking the six monitors for their state',
-          'Collecting bands, tracked pixels and candidates',
-          'Waiting for the slower monitors to answer']" />
-        <div v-else class="overflow-x-auto">
-          <table class="min-w-full text-sm">
-            <thead class="text-left text-gray-500 dark:text-gray-400">
-              <tr>
-                <th class="px-2 py-1">Node</th><th class="px-2 py-1">State</th><th class="px-2 py-1">Band (MHz)</th>
-                <th class="px-2 py-1 text-right">Tracked pixels</th><th class="px-2 py-1 text-right">DM reach (pc cm⁻³)</th>
-                <th class="px-2 py-1 text-right">Candidates</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="n in nodes" :key="n.node" class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
-                :class="n.node == node ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
-                @click="selectNode(n.node)">
-                <td class="px-2 py-1 font-mono">{{ n.node }}</td>
-                <td class="px-2 py-1">
-                  <UBadge :color="!n.up ? 'red' : n.conditions?.latest?.disturbed ? 'orange' : 'green'" variant="subtle" size="xs"
-                    :label="!n.up ? 'Not answering' : n.conditions?.latest?.disturbed ? 'Disturbed' : 'Running'" />
-                </td>
-                <td class="px-2 py-1 tabular-nums">{{ n.band ? `${n.band.f_lo.toFixed(2)}–${n.band.f_hi.toFixed(2)}` : '' }}</td>
-                <td class="px-2 py-1 text-right tabular-nums">{{ n.tracked ?? '' }}</td>
-                <td class="px-2 py-1 text-right tabular-nums">{{ dmReach(n) ?? '' }}</td>
-                <td class="px-2 py-1 text-right tabular-nums">{{ candCount(n) ?? '' }}</td>
-              </tr>
-              <tr v-if="!nodes.length && !nodesPending"><td colspan="6" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div v-if="selNode?.up" class="mt-3 border-t border-gray-200 dark:border-gray-800 pt-3">
-          <div class="text-sm font-medium mb-2">{{ selNode.node }}</div>
-          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-sm">
-            <div><dt class="text-gray-500 dark:text-gray-400">Channels</dt><dd class="tabular-nums">{{ selNode.band?.nchan ?? '' }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Image time (ms)</dt><dd class="tabular-nums">{{ selNode.band ? (selNode.band.dt * 1000).toFixed(1) : '' }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">HEALPix nside</dt><dd class="tabular-nums">{{ selNode.nside ?? '' }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Beam (°)</dt><dd class="tabular-nums">{{ fmt(selNode.beam_deg) }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Threshold (S/N)</dt><dd class="tabular-nums">{{ fmt(selNode.threshold) }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Compute load</dt><dd class="tabular-nums">{{ pct(selNode.cpu_fraction) }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Lag (s)</dt><dd class="tabular-nums">{{ fmt(selNode.lag_s) }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Images missing</dt><dd class="tabular-nums">{{ selNode.images ? pct((selNode.missing_images ?? 0) / (selNode.images + (selNode.missing_images ?? 0))) : '' }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Channels flagged</dt>
-              <dd class="tabular-nums" :title="selNode.rfi_flagging?.masked_mhz?.length ? `Masked at ${selNode.rfi_flagging.masked_mhz.map(f => f.toFixed(3)).join(', ')} MHz` : undefined">
-                {{ pct(selNode.rfi_flagging?.flagged_fraction_last_minute) }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">RFI candidates</dt><dd class="tabular-nums">{{ selNode.candidates?.rfi ?? '' }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Test injections found</dt>
-              <dd class="tabular-nums">{{ selNode.injections?.injected ? `${selNode.injections.recovered} of ${selNode.injections.recovered + selNode.injections.missed}` : '' }}</dd></div>
-            <div><dt class="text-gray-500 dark:text-gray-400">Last image ({{ tz.zoneName() }})</dt>
-              <dd class="tabular-nums">{{ selNode.last_image_unix ? tz.clock(selNode.last_image_unix * 1000) : '' }}</dd></div>
-          </dl>
-          <p v-if="selNode.conditions?.latest?.disturbed" class="mt-2 text-xs text-orange-600 dark:text-orange-400">
-            Disturbed<template v-if="selNode.conditions.latest.reasons?.length"> by {{ selNode.conditions.latest.reasons.map(r => reasonLabel[r] ?? r).join(', ') }}</template><template v-if="selNode.conditions.summary?.disturbed_since"> since {{ tz.dateTime(selNode.conditions.summary.disturbed_since * 1000) }}</template>.
-          </p>
-        </div>
-        <p v-else-if="selNode" class="mt-3 text-sm text-gray-500 dark:text-gray-400">The monitor on {{ selNode.node }} is not answering.</p>
-      </UCard>
-    </div>
-
-    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-      <template #header>
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="font-medium">{{ openCand ? 'Candidate' : 'Spectrogram' }}</span>
-          <span v-if="openCand" class="text-sm text-gray-500 dark:text-gray-400">{{ openCand.node }}, {{ openCand.id }}</span>
-          <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ selNode.node }}, live pixel</span>
-          <div class="flex-1" />
-          <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
-          <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
-          <UButton size="xs" variant="outline" label="Display" :disabled="!!positionError || raInput === '' || decInput === ''" @click="showPosition" />
-          <span v-if="positionError" class="text-xs text-red-500">{{ positionError }}</span>
-        </div>
-      </template>
-      <SpectrogramSkymonCandidate v-if="openCand" :node="openCand.node" :id="openCand.id"
-        @live="openCand = null; mark = null" />
-      <SpectrogramSkymonSpectrogram v-else-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
-        :hpix="pickedHpix" :dt-image="selNode?.band?.dt" :t-inf="mark?.tInf" :dm="mark?.dm" />
-      <p v-else class="text-center text-gray-500 dark:text-gray-400 py-6">
-        Click a pixel on the sky, enter a position, or open the spectrogram of a candidate.
-      </p>
-    </UCard>
-
-    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-      <template #header>
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="font-medium">Pulsars</span>
-          <span class="text-sm text-gray-500 dark:text-gray-400">
-            single pulses found at the position and DM of a known pulsar, in the last {{ sinceOptions.find(o => o.value == sinceH)?.label ?? `${sinceH} hours` }}
-          </span>
-        </div>
-      </template>
-      <SpectrogramSkymonLoading v-if="pulsesPending" compact :messages="['Asking the monitors for their pulsars', 'Collecting the single pulses of each']" />
-      <div v-else class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-gray-500 dark:text-gray-400">
-            <tr>
-              <th class="px-2 py-1">Pulsar</th><th class="px-2 py-1 text-right">DM (pc cm⁻³)</th><th class="px-2 py-1 text-right">Period (s)</th>
-              <th class="px-2 py-1 text-right">Pulses</th><th class="px-2 py-1 text-right">Brightest S/N</th>
-              <th class="px-2 py-1">Last pulse ({{ tz.zoneName() }})</th><th class="px-2 py-1" />
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in pulsarRows" :key="r.p.name" class="border-t border-gray-200 dark:border-gray-800">
-              <td class="px-2 py-1">
-                <SpectrogramSkymonPulsarName :name="r.p.name" :alias="r.p.alias" :size="26" />
-                <span v-if="r.p.giant_pulses" class="ml-2 text-xs text-gray-500 dark:text-gray-400">giant pulses</span>
-              </td>
-              <td class="px-2 py-1 text-right tabular-nums">{{ r.p.dm.toFixed(2) }}</td>
-              <td class="px-2 py-1 text-right tabular-nums">{{ r.p.period_s != null ? r.p.period_s.toFixed(4) : '' }}</td>
-              <td class="px-2 py-1 text-right tabular-nums">{{ r.n || '' }}</td>
-              <td class="px-2 py-1 text-right tabular-nums">{{ r.brightest ? r.brightest.snr.toFixed(1) : '' }}</td>
-              <td class="px-2 py-1 font-mono">{{ r.last ? tz.dateTime(r.last.t_inf * 1000) : '' }}</td>
-              <td class="px-2 py-1"><UButton v-if="r.brightest" size="2xs" variant="outline" label="Brightest pulse" @click="showCandidate(r.brightest)" /></td>
-            </tr>
-            <tr v-if="!pulsarRows.length"><td colspan="7" class="px-2 py-3 text-center text-gray-500">No monitor answered with its pulsars.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </UCard>
-
-    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-      <template #header>
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="font-medium">Events across bands</span>
-          <span class="text-sm text-gray-500 dark:text-gray-400">each candidate checked in every band that could see it</span>
-          <UCheckbox v-model="showInjEvents" label="Test injections" />
-          <UCheckbox v-model="showUnconfirmable" label="Not checkable" />
-          <UCheckbox v-model="showReviewed" label="Already reviewed" />
-          <UCheckbox v-model="showTerrestrial" label="Terrestrial" />
-          <div class="flex-1" />
-          <UBadge v-if="combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
-          <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="eventsPending" @click="loadEvents" />
-        </div>
-      </template>
-      <div class="overflow-x-auto max-h-96">
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900">
-            <tr>
-              <th class="px-2 py-1">Arrival at infinite frequency ({{ tz.zoneName() }})</th><th class="px-2 py-1">Result</th>
-              <th class="px-2 py-1 text-right">DM (pc cm⁻³)</th><th class="px-2 py-1 text-right">Combined S/N</th>
-              <th class="px-2 py-1 text-right">RA (°)</th><th class="px-2 py-1 text-right">Dec (°)</th>
-              <th class="px-2 py-1">Bands</th><th class="px-2 py-1" />
-            </tr>
-          </thead>
-          <tbody>
-            <template v-for="e in shownEvents" :key="e.id">
-              <tr class="border-t border-gray-200 dark:border-gray-800 cursor-pointer" @click="expanded = expanded == e.id ? null : e.id">
-                <td class="px-2 py-1 font-mono">{{ tz.dateTime(e.t_inf * 1000) }}</td>
-                <td class="px-2 py-1">
-                  <UBadge :color="evColor[e.status]" variant="subtle" size="xs" :label="evLabel[e.status] ?? e.status" />
-                  <UBadge v-if="e.kind == 'injection'" color="sky" variant="outline" size="xs" label="Test injection" class="ml-1" />
-                  <UBadge v-if="reviewLabel[e.review ?? '']" :color="e.review == 'pending' ? 'orange' : 'gray'" variant="outline" size="xs"
-                    :label="reviewLabel[e.review ?? '']" class="ml-1" />
-                  <UBadge v-if="e.disturbed" color="orange" variant="outline" size="xs" label="Band disturbed" class="ml-1" />
-                  <UBadge v-if="e.other_dm?.length" color="violet" variant="outline" size="xs" label="Other DMs here" class="ml-1" />
-                </td>
-                <td class="px-2 py-1 text-right">{{ e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '' }}</td>
-                <td class="px-2 py-1 text-right">{{ e.combined_snr != null ? e.combined_snr.toFixed(1) : '' }}</td>
-                <td class="px-2 py-1 text-right">{{ fmt(e.ra, 2) }}</td>
-                <td class="px-2 py-1 text-right">{{ fmt(e.dec, 2) }}</td>
-                <td class="px-2 py-1">{{ e.kind == 'terrestrial' ? `${e.candidates?.length ?? 0} candidates` : e.seen?.length ? `seen in ${e.seen.length} of ${e.could_see?.length ?? 0}` : '' }}</td>
-                <td class="px-2 py-1"><UButton v-if="e.ra != null" size="2xs" variant="outline" label="Spectrogram" @click.stop="showEvent(e)" /></td>
-              </tr>
-              <tr v-if="expanded == e.id" class="bg-gray-50 dark:bg-gray-800/50">
-                <td colspan="8" class="px-4 py-2 space-y-2">
-                  <div class="flex flex-wrap gap-2">
-                    <UBadge v-for="(b, name) in e.bands" :key="name" size="xs" variant="soft"
-                      :color="b.state == 'detected' || (b.state == 'followup' && (b.followup?.snr ?? 0) >= 6) ? 'green' : b.state == 'watching' ? 'sky' : 'gray'"
-                      :label="bandText(String(name), b) + (b.state == 'detected' || b.data_id ? ', data kept' : '')" />
-                  </div>
-                  <p v-if="e.spectrum?.consistent_with?.length" class="text-xs text-gray-600 dark:text-gray-300">
-                    The S/N measured in the bands is consistent with {{ e.spectrum.consistent_with.join(', or with ') }}.
-                  </p>
-                  <p v-if="e.kind == 'terrestrial'" class="text-xs text-gray-600 dark:text-gray-300">
-                    {{ e.reason }}<template v-if="e.candidates?.length">. Candidates
-                      {{ e.candidates.map(c => `${c.node} S/N ${c.snr.toFixed(1)} at DM ${c.dm.toFixed(1)}`).join(', ') }}.</template>
-                  </p>
-                  <p v-if="e.other_dm?.length" class="text-xs text-gray-600 dark:text-gray-300">
-                    Also found at this position during the sweep, at other DMs, with data kept
-                    {{ e.other_dm.map(o => `${o.node} S/N ${o.snr.toFixed(1)} at DM ${o.dm.toFixed(1)}`).join(', ') }}.
-                    Each is the same burst at a neighbouring trial DM, or a second burst.
-                  </p>
-                  <div v-if="e.context" class="text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
-                    <div v-if="e.context.sun_el_deg != null">
-                      Sun at elevation {{ e.context.sun_el_deg.toFixed(0) }}°, {{ fmt(e.context.sun_sep_deg, 0) }}° from the position.
-                    </div>
-                    <div v-for="(r, i) in e.context.solar ?? []" :key="i">Solar {{ solarText(r) }}.</div>
-                    <div v-if="e.context.solar && !e.context.solar.length">No solar radio burst or flare reported near the arrivals.</div>
-                    <div v-if="e.context.lightning">
-                      {{ e.context.lightning.strikes_100km }} lightning strikes within 100 km<template v-if="e.context.lightning.nearest_km != null">, nearest {{ e.context.lightning.nearest_km.toFixed(0) }} km</template><template v-if="!e.context.lightning.complete"> (data incomplete)</template>.
-                    </div>
-                  </div>
-                  <div v-if="e.notes?.length" class="text-xs text-gray-500 dark:text-gray-400">
-                    <div v-for="(n, i) in e.notes" :key="i">{{ n }}</div>
-                  </div>
-                  <div v-if="e.reviews?.length" class="text-xs text-gray-600 dark:text-gray-300">
-                    <div v-for="(r, i) in e.reviews" :key="i">
-                      {{ tz.dateTime(r.at * 1000) }}, {{ r.by }} reviewed it as {{ reviewLabel[r.verdict] }}<template v-if="r.note">. {{ r.note }}</template>
-                    </div>
-                  </div>
-                  <div v-if="e.kind == 'sky' && e.status != 'pending'" class="flex flex-wrap items-center gap-2">
-                    <template v-if="canReview">
-                      <UInput v-model="reviewNote" size="xs" placeholder="Note (optional)" class="w-72" @click.stop />
-                      <UButton size="2xs" color="green" variant="soft" label="FRB" @click.stop="submitReview(e, 'frb')" />
-                      <UButton size="2xs" color="red" variant="soft" label="RFI" @click.stop="submitReview(e, 'rfi')" />
-                      <UButton size="2xs" color="gray" variant="soft" label="Unclear" @click.stop="submitReview(e, 'unclear')" />
-                      <span v-if="reviewMsg" class="text-xs text-gray-500">{{ reviewMsg }}</span>
-                    </template>
-                    <span v-else class="text-xs text-gray-500">Log in to review this event.</span>
-                  </div>
-                </td>
-              </tr>
+        <UCard :ui="{ body: { padding: 'p-1 sm:p-2' } }">
+          <UTabs v-model="tab" :items="tabs" :ui="{ list: { width: 'w-full' } }">
+            <template #frbs>
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 py-2 text-sm">
+                <URadioGroup v-model="frbView" :options="[{ value: 'candidates', label: 'Candidates' }, { value: 'events', label: 'Events across bands' }]"
+                  :ui="{ fieldset: 'flex gap-4' }" />
+                <div class="flex-1" />
+                <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="frbView == 'events' ? eventsPending : candsPending"
+                  aria-label="Reload" @click="frbView == 'events' ? loadEvents() : loadCands()" />
+              </div>
+              <!-- candidates of all monitors -->
+              <template v-if="frbView == 'candidates'">
+                <SpectrogramSkymonDmTime :cands="shownCands" :pulsars="dmtPulsars" :open="openCand" @select="showCandidate" />
+                <div class="flex flex-wrap items-center gap-4 px-1 pb-2 text-sm">
+                  <UCheckbox v-model="showInjections" label="Test injections" />
+                  <UCheckbox v-model="showRfi" label="RFI" />
+                  <UCheckbox v-model="showKnown" label="Known sources" />
+                </div>
+                <div class="overflow-auto max-h-[32rem]">
+                  <table class="min-w-full text-sm">
+                    <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900 z-10">
+                      <tr>
+                        <th class="px-2 py-1">Arrival ({{ tz.zoneName() }})</th><th class="px-2 py-1">Node</th>
+                        <th class="px-2 py-1 text-right">S/N</th><th class="px-2 py-1 text-right">DM</th><th class="px-2 py-1">Class</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="c in shownCands" :key="c.node + c.id" class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
+                        :class="isOpen(c) ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+                        :title="`RA ${c.ra.toFixed(2)}°, Dec ${c.dec.toFixed(2)}°, elevation ${c.el.toFixed(0)}°, width ${c.width_s.toFixed(2)} s`"
+                        @click="showCandidate(c)">
+                        <td class="px-2 py-1 font-mono whitespace-nowrap">{{ tz.dateTime(c.t_inf * 1000) }}</td>
+                        <td class="px-2 py-1 font-mono">{{ c.node }}</td>
+                        <td class="px-2 py-1 text-right tabular-nums">{{ c.snr.toFixed(1) }}</td>
+                        <td class="px-2 py-1 text-right tabular-nums">{{ c.dm.toFixed(1) }}</td>
+                        <td class="px-2 py-1">
+                          <UBadge :color="clsColor[c.cls]" variant="subtle" size="xs" :label="clsLabel[c.cls] ?? c.cls" />
+                          <SpectrogramSkymonPulsarName v-if="c.cls == 'known' && c.known_source?.kind == 'pulsar'" class="ml-1 text-xs"
+                            :name="c.known_source.name" :alias="c.known_source.alias" :size="18" />
+                          <span v-if="clsText(c)" class="ml-1 text-xs text-gray-500 dark:text-gray-400">{{ clsText(c) }}</span>
+                        </td>
+                      </tr>
+                      <tr v-if="!shownCands.length && candsPending"><td colspan="5">
+                        <SpectrogramSkymonLoading compact :messages="['Asking every monitor for its candidates', 'Merging the candidates of all bands']" /></td></tr>
+                      <tr v-if="!shownCands.length && !candsPending"><td colspan="5" class="px-2 py-3 text-center text-gray-500">No candidates in this period.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+              <!-- events of the combiner -->
+              <template v-else>
+                <div class="flex flex-wrap items-center gap-4 px-1 pb-2 text-sm">
+                  <UCheckbox v-model="showInjEvents" label="Test injections" />
+                  <UCheckbox v-model="showUnconfirmable" label="Not checkable" />
+                  <UCheckbox v-model="showReviewed" label="Already reviewed" />
+                  <UCheckbox v-model="showTerrestrial" label="Terrestrial" />
+                  <UBadge v-if="combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
+                </div>
+                <div class="overflow-auto max-h-[32rem]">
+                  <table class="min-w-full text-sm">
+                    <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900 z-10">
+                      <tr>
+                        <th class="px-2 py-1">Arrival ({{ tz.zoneName() }})</th><th class="px-2 py-1">Result</th>
+                        <th class="px-2 py-1 text-right">DM</th><th class="px-2 py-1 text-right">S/N</th><th class="px-2 py-1">Bands</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template v-for="e in shownEvents" :key="e.id">
+                        <tr class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
+                          :class="expanded == e.id ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+                          @click="openEvent(e)">
+                          <td class="px-2 py-1 font-mono whitespace-nowrap">{{ tz.dateTime(e.t_inf * 1000) }}</td>
+                          <td class="px-2 py-1">
+                            <UBadge :color="evColor[e.status]" variant="subtle" size="xs" :label="evLabel[e.status] ?? e.status" />
+                            <UBadge v-if="e.kind == 'injection'" color="sky" variant="outline" size="xs" label="Test injection" class="ml-1" />
+                            <UBadge v-if="reviewLabel[e.review ?? '']" :color="e.review == 'pending' ? 'orange' : 'gray'" variant="outline" size="xs"
+                              :label="reviewLabel[e.review ?? '']" class="ml-1" />
+                            <UBadge v-if="e.disturbed" color="orange" variant="outline" size="xs" label="Band disturbed" class="ml-1" />
+                            <UBadge v-if="e.other_dm?.length" color="violet" variant="outline" size="xs" label="Other DMs here" class="ml-1" />
+                          </td>
+                          <td class="px-2 py-1 text-right tabular-nums whitespace-nowrap">{{ e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '' }}</td>
+                          <td class="px-2 py-1 text-right tabular-nums">{{ e.combined_snr != null ? e.combined_snr.toFixed(1) : '' }}</td>
+                          <td class="px-2 py-1 whitespace-nowrap">{{ e.kind == 'terrestrial' ? `${e.candidates?.length ?? 0} candidates` : e.seen?.length ? `${e.seen.length} of ${e.could_see?.length ?? 0}` : '' }}</td>
+                        </tr>
+                        <tr v-if="expanded == e.id" class="bg-gray-50 dark:bg-gray-800/50">
+                          <td colspan="5" class="px-3 py-2 space-y-2">
+                            <div class="text-xs text-gray-600 dark:text-gray-300">RA {{ fmt(e.ra, 2) }}°, Dec {{ fmt(e.dec, 2) }}°</div>
+                            <div class="flex flex-wrap gap-2">
+                              <UBadge v-for="(b, name) in e.bands" :key="name" size="xs" variant="soft"
+                                :color="b.state == 'detected' || (b.state == 'followup' && (b.followup?.snr ?? 0) >= 6) ? 'green' : b.state == 'watching' ? 'sky' : 'gray'"
+                                :label="bandText(String(name), b) + (b.state == 'detected' || b.data_id ? ', data kept' : '')" />
+                            </div>
+                            <p v-if="e.spectrum?.consistent_with?.length" class="text-xs text-gray-600 dark:text-gray-300">
+                              The S/N measured in the bands is consistent with {{ e.spectrum.consistent_with.join(', or with ') }}.
+                            </p>
+                            <p v-if="e.kind == 'terrestrial'" class="text-xs text-gray-600 dark:text-gray-300">
+                              {{ e.reason }}<template v-if="e.candidates?.length">. Candidates
+                                {{ e.candidates.map(c => `${c.node} S/N ${c.snr.toFixed(1)} at DM ${c.dm.toFixed(1)}`).join(', ') }}.</template>
+                            </p>
+                            <p v-if="e.other_dm?.length" class="text-xs text-gray-600 dark:text-gray-300">
+                              Also found at this position during the sweep, at other DMs, with data kept
+                              {{ e.other_dm.map(o => `${o.node} S/N ${o.snr.toFixed(1)} at DM ${o.dm.toFixed(1)}`).join(', ') }}.
+                              Each is the same burst at a neighbouring trial DM, or a second burst.
+                            </p>
+                            <div v-if="e.context" class="text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
+                              <div v-if="e.context.sun_el_deg != null">
+                                Sun at elevation {{ e.context.sun_el_deg.toFixed(0) }}°, {{ fmt(e.context.sun_sep_deg, 0) }}° from the position.
+                              </div>
+                              <div v-for="(r, i) in e.context.solar ?? []" :key="i">Solar {{ solarText(r) }}.</div>
+                              <div v-if="e.context.solar && !e.context.solar.length">No solar radio burst or flare reported near the arrivals.</div>
+                              <div v-if="e.context.lightning">
+                                {{ e.context.lightning.strikes_100km }} lightning strikes within 100 km<template v-if="e.context.lightning.nearest_km != null">, nearest {{ e.context.lightning.nearest_km.toFixed(0) }} km</template><template v-if="!e.context.lightning.complete"> (data incomplete)</template>.
+                              </div>
+                            </div>
+                            <div v-if="e.notes?.length" class="text-xs text-gray-500 dark:text-gray-400">
+                              <div v-for="(n, i) in e.notes" :key="i">{{ n }}</div>
+                            </div>
+                            <div v-if="e.reviews?.length" class="text-xs text-gray-600 dark:text-gray-300">
+                              <div v-for="(r, i) in e.reviews" :key="i">
+                                {{ tz.dateTime(r.at * 1000) }}, {{ r.by }} reviewed it as {{ reviewLabel[r.verdict] }}<template v-if="r.note">. {{ r.note }}</template>
+                              </div>
+                            </div>
+                            <div v-if="e.kind == 'sky' && e.status != 'pending'" class="flex flex-wrap items-center gap-2">
+                              <template v-if="canReview">
+                                <UInput v-model="reviewNote" size="xs" placeholder="Note (optional)" class="w-60" @click.stop />
+                                <UButton size="2xs" color="green" variant="soft" label="FRB" @click.stop="submitReview(e, 'frb')" />
+                                <UButton size="2xs" color="red" variant="soft" label="RFI" @click.stop="submitReview(e, 'rfi')" />
+                                <UButton size="2xs" color="gray" variant="soft" label="Unclear" @click.stop="submitReview(e, 'unclear')" />
+                                <span v-if="reviewMsg" class="text-xs text-gray-500">{{ reviewMsg }}</span>
+                              </template>
+                              <span v-else class="text-xs text-gray-500">Log in to review this event.</span>
+                            </div>
+                          </td>
+                        </tr>
+                      </template>
+                      <tr v-if="!shownEvents.length && eventsPending"><td colspan="5">
+                        <SpectrogramSkymonLoading compact :messages="['Asking the combiner for the events', 'Collecting the bands of each event']" /></td></tr>
+                      <tr v-if="!shownEvents.length && !eventsPending"><td colspan="5" class="px-2 py-3 text-center text-gray-500">No events in this period.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
             </template>
-            <tr v-if="!shownEvents.length && eventsPending"><td colspan="8">
-              <SpectrogramSkymonLoading compact :messages="['Asking the combiner for the events', 'Collecting the bands of each event']" /></td></tr>
-            <tr v-if="!shownEvents.length && !eventsPending"><td colspan="8" class="px-2 py-3 text-center text-gray-500">No events in this period.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </UCard>
 
-    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-      <template #header>
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="font-medium">Candidates</span>
-          <USelect v-model="sinceH" :options="sinceOptions" size="xs" />
-          <UCheckbox v-model="showInjections" label="Test injections" />
-          <UCheckbox v-model="showRfi" label="RFI" />
-          <UCheckbox v-model="showKnown" label="Known sources" />
-          <div class="flex-1" />
-          <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="candsPending" @click="loadCands" />
-        </div>
-      </template>
-      <div class="overflow-x-auto max-h-96">
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900">
-            <tr>
-              <th class="px-2 py-1">Arrival at infinite frequency ({{ tz.zoneName() }})</th><th class="px-2 py-1">Band</th>
-              <th class="px-2 py-1 text-right">S/N</th><th class="px-2 py-1 text-right">DM (pc cm⁻³)</th>
-              <th class="px-2 py-1 text-right">Width (s)</th><th class="px-2 py-1 text-right">Fluence</th>
-              <th class="px-2 py-1 text-right">RA (°)</th>
-              <th class="px-2 py-1 text-right">Dec (°)</th><th class="px-2 py-1 text-right">Elevation (°)</th>
-              <th class="px-2 py-1">Class</th><th class="px-2 py-1" />
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="c in shownCands" :key="c.node + c.id" class="border-t border-gray-200 dark:border-gray-800">
-              <td class="px-2 py-1 font-mono">{{ tz.dateTime(c.t_inf * 1000) }}</td>
-              <td class="px-2 py-1">{{ c.node }}, {{ ((c.f_lo_mhz + c.f_hi_mhz) / 2).toFixed(1) }} MHz</td>
-              <td class="px-2 py-1 text-right">{{ c.snr.toFixed(1) }}</td>
-              <td class="px-2 py-1 text-right">{{ c.dm.toFixed(1) }}</td>
-              <td class="px-2 py-1 text-right">{{ c.width_s.toFixed(2) }}</td>
-              <td class="px-2 py-1 text-right" :title="c.flux?.fluence_err_jy_ms != null ? `Uncertainty from the S/N ${fluenceText(c.flux.fluence_err_jy_ms)}` : undefined">
-                {{ c.flux ? fluenceText(c.flux.fluence_jy_ms) : '' }}
-              </td>
-              <td class="px-2 py-1 text-right">{{ c.ra.toFixed(2) }}</td>
-              <td class="px-2 py-1 text-right">{{ c.dec.toFixed(2) }}</td>
-              <td class="px-2 py-1 text-right">{{ c.el.toFixed(0) }}</td>
-              <td class="px-2 py-1">
-                <UBadge :color="clsColor[c.cls]" variant="subtle" size="xs" :label="clsLabel[c.cls] ?? c.cls" />
-                <SpectrogramSkymonPulsarName v-if="c.cls == 'known' && c.known_source?.kind == 'pulsar'" class="ml-1 text-xs"
-                  :name="c.known_source.name" :alias="c.known_source.alias" :size="18" />
-                <span v-if="clsText(c)" class="ml-1 text-xs text-gray-500 dark:text-gray-400">{{ clsText(c) }}</span>
-              </td>
-              <td class="px-2 py-1"><UButton size="2xs" variant="outline" label="Spectrogram" @click="showCandidate(c)" /></td>
-            </tr>
-            <tr v-if="!shownCands.length && candsPending"><td colspan="11">
-              <SpectrogramSkymonLoading compact :messages="['Asking every monitor for its candidates', 'Merging the candidates of all bands']" /></td></tr>
-            <tr v-if="!shownCands.length && !candsPending"><td colspan="11" class="px-2 py-3 text-center text-gray-500">No candidates in this period.</td></tr>
-          </tbody>
-        </table>
+            <template #pulsars>
+              <div class="flex flex-wrap items-center gap-4 px-1 py-2 text-sm">
+                <span class="text-gray-500 dark:text-gray-400">Single pulses found at the position and DM of a known pulsar</span>
+                <div class="flex-1" />
+                <UCheckbox v-model="showQuietPulsars" label="Pulsars without pulses" />
+              </div>
+              <SpectrogramSkymonLoading v-if="pulsesPending" compact :messages="['Asking the monitors for their pulsars', 'Collecting the single pulses of each']" />
+              <div v-else class="overflow-auto max-h-[32rem]">
+                <table class="min-w-full text-sm">
+                  <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900 z-10">
+                    <tr>
+                      <th class="px-2 py-1">Pulsar</th><th class="px-2 py-1 text-right">DM</th><th class="px-2 py-1 text-right">Period (s)</th>
+                      <th class="px-2 py-1 text-right">Pulses</th><th class="px-2 py-1 text-right">Brightest</th>
+                      <th class="px-2 py-1">Last ({{ tz.zoneName() }})</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template v-for="r in shownPulsarRows" :key="r.p.name">
+                      <tr class="border-t border-gray-200 dark:border-gray-800" :class="r.n ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50' : 'text-gray-500 dark:text-gray-400'"
+                        @click="r.n && (openPulsar = openPulsar == r.p.name ? null : r.p.name)">
+                        <td class="px-2 py-1 whitespace-nowrap">
+                          <UIcon v-if="r.n" :name="openPulsar == r.p.name ? 'i-heroicons-chevron-down-20-solid' : 'i-heroicons-chevron-right-20-solid'" class="w-4 h-4 align-middle text-gray-400" />
+                          <SpectrogramSkymonPulsarName :name="r.p.name" :alias="r.p.alias" :size="24" />
+                          <span v-if="r.p.giant_pulses" class="ml-2 text-xs text-gray-500 dark:text-gray-400">giant pulses</span>
+                        </td>
+                        <td class="px-2 py-1 text-right tabular-nums">{{ r.p.dm.toFixed(2) }}</td>
+                        <td class="px-2 py-1 text-right tabular-nums">{{ r.p.period_s != null ? r.p.period_s.toFixed(4) : '' }}</td>
+                        <td class="px-2 py-1 text-right tabular-nums">{{ r.n || '' }}</td>
+                        <td class="px-2 py-1 text-right tabular-nums">{{ r.brightest ? r.brightest.snr.toFixed(1) : '' }}</td>
+                        <td class="px-2 py-1 font-mono whitespace-nowrap">{{ r.last ? tz.dateTime(r.last.t_inf * 1000) : '' }}</td>
+                      </tr>
+                      <template v-if="openPulsar == r.p.name">
+                        <tr v-for="c in r.pulses" :key="c.node + c.id" class="cursor-pointer text-xs"
+                          :class="isOpen(c) ? 'bg-primary-50 dark:bg-primary-950/40' : 'bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                          @click="showCandidate(c)">
+                          <td class="pl-8 pr-2 py-1 font-mono">{{ c.node }}</td>
+                          <td class="px-2 py-1 text-right tabular-nums">{{ c.dm.toFixed(1) }}</td>
+                          <td class="px-2 py-1" />
+                          <td class="px-2 py-1" />
+                          <td class="px-2 py-1 text-right tabular-nums">{{ c.snr.toFixed(1) }}</td>
+                          <td class="px-2 py-1 font-mono whitespace-nowrap">{{ tz.dateTime(c.t_inf * 1000) }}</td>
+                        </tr>
+                      </template>
+                    </template>
+                    <tr v-if="!shownPulsarRows.length"><td colspan="6" class="px-2 py-3 text-center text-gray-500">
+                      {{ pulsarRows.length ? 'No pulses from any pulsar in this period.' : 'No monitor answered with its pulsars.' }}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+          </UTabs>
+        </UCard>
       </div>
-    </UCard>
 
+      <!-- right: the spectrogram of what is selected, kept in view -->
+      <div ref="viewer" class="min-w-0 xl:sticky xl:top-0 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto">
+        <UCard :ui="{ body: { padding: 'p-2 sm:p-3' }, header: { padding: 'px-3 py-2 sm:px-4' } }">
+          <template #header>
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="font-medium">{{ openCand ? 'Candidate' : 'Spectrogram' }}</span>
+              <span v-if="openCand" class="text-sm text-gray-500 dark:text-gray-400 truncate">{{ openCand.node }}, {{ openCand.id }}</span>
+              <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ selNode.node }}, live pixel</span>
+              <div class="flex-1" />
+              <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-24" @keyup.enter="showPosition" />
+              <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-24" @keyup.enter="showPosition" />
+              <UButton size="xs" variant="outline" label="Display" :disabled="!!positionError || raInput === '' || decInput === ''" @click="showPosition" />
+              <span v-if="positionError" class="text-xs text-red-500 w-full">{{ positionError }}</span>
+            </div>
+          </template>
+          <SpectrogramSkymonCandidate v-if="openCand" :node="openCand.node" :id="openCand.id"
+            @live="openCand = null; mark = null" />
+          <SpectrogramSkymonSpectrogram v-else-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
+            :hpix="pickedHpix" :dt-image="selNode?.band?.dt" :t-inf="mark?.tInf" :dm="mark?.dm" />
+          <p v-else class="text-center text-gray-500 dark:text-gray-400 py-16">
+            Click a pixel on the sky, a candidate, an event or a pulsar's pulse, or enter a position.
+          </p>
+        </UCard>
+      </div>
+    </div>
   </UDashboardPanelContent>
 </template>

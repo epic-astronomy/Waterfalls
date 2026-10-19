@@ -37,6 +37,23 @@ const pending = ref(false)
 const error = ref('')
 const normOn = useState('skymon-cand-normalise', () => true)
 const showTrack = ref(true)
+// the spectrum with each channel moved to the arrival at the top of the band, as
+// the candidate plots of FETCH and Heimdall show it: a burst at the DM found stands upright
+const dedispOn = useState('skymon-cand-dedisperse', () => false)
+
+function dedispersed(): Float32Array[] {
+  const d = data.value, c = cand.value
+  if (!d?.dynspec_t?.length || !c) return dyn
+  const dt = d.dynspec_t[1] - d.dynspec_t[0], n = d.dynspec_t.length
+  const fTop = d.freqs_mhz[d.freqs_mhz.length - 1]
+  return dyn.map((row, ch) => {
+    const f = d.freqs_mhz[ch]
+    const k = Math.round(K_DM * c.dm * (1 / (f * f) - 1 / (fTop * fTop)) / dt)
+    const out = new Float32Array(n).fill(NaN)
+    out.set(row.subarray(Math.min(n, k)), 0)
+    return out
+  })
+}
 const window_ = ref<[number, number] | null>(null)  // UTC ms; null is the whole span
 
 // decoded arrays, rows as named: dyn[channel][time], acc[channel][time]
@@ -236,8 +253,13 @@ function drawMain() {
     traces.push({ ...heat, z: acc, zmin: alo, zmax: ahi, x: d.accum_t.map(t => tz.plotTime((t + dtA / 2) * 1000)), y: d.freqs_mhz })
   }
   if (d.dynspec_t?.length && dyn.length)
-    traces.push({ ...heat, z: dyn, x: d.dynspec_t.map(t => tz.plotTime(t * 1000)), y: d.freqs_mhz })
-  if (showTrack.value) {
+    traces.push({ ...heat, z: dedispOn.value ? dedispersed() : dyn, x: d.dynspec_t.map(t => tz.plotTime(t * 1000)), y: d.freqs_mhz })
+  if (showTrack.value && dedispOn.value && sweep.value) {
+    // dedispersed, the burst's track is the arrival at the top of the band, in every channel
+    const x = tz.plotTime(sweep.value[0] * 1000)
+    traces.push({ x: [x, x], y: [b.lo, b.hi], type: 'scatter', mode: 'lines', xaxis: 'x', yaxis: 'y', hoverinfo: 'skip',
+      line: { dash: 'dash', width: 1.5, color: dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)' } })
+  } else if (showTrack.value) {
     const xs: string[] = [], ys: number[] = []
     for (let i = 0; i <= 200; i++) {
       const f = b.hi - (b.hi - b.lo) * i / 200
@@ -247,7 +269,7 @@ function drawMain() {
       line: { dash: 'dash', width: 1.5, color: dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)' } })
   }
   const inj = d.injection
-  if (showTrack.value && inj) {
+  if (showTrack.value && inj && !dedispOn.value) {
     const xs: string[] = [], ys: number[] = []
     for (let i = 0; i <= 200; i++) {
       const f = b.hi - (b.hi - b.lo) * i / 200
@@ -264,7 +286,8 @@ function drawMain() {
   Plotly.react(el, traces, {
     height: 520,
     margin: { t: 45, b: 55, l: 70, r: 20 },
-    title: { text: `${clsTitle.value} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)} - ${fc.toFixed(2)} MHz | LWA-Sevilleta`, font: font(18) },
+    title: { text: `${clsTitle.value} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)} - ${fc.toFixed(2)} MHz | LWA-Sevilleta`,
+      font: font(el.clientWidth < 760 ? 14 : 18) },
     xaxis: { range: [tz.plotTime(w[0]), tz.plotTime(w[1])], title: { text: `Time (${tz.zoneName(w[0])})`, font: font(16) },
       tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, anchor: 'y' },
     yaxis: { domain: [0, 0.74], range: [b.lo, b.hi], title: { text: 'Frequency (MHz)', font: font(16) }, tickfont: { color: ink }, tickcolor: ink },
@@ -366,7 +389,7 @@ watch(window_, w => {
   else drawMain()
 })
 watch(normOn, () => { prepare(); drawAll() })
-watch([showTrack, colorMode, () => tz.mode.value], drawAll)
+watch([showTrack, dedispOn, colorMode, () => tz.mode.value], drawAll)
 let ro: ResizeObserver | undefined
 onMounted(() => {
   load()
@@ -410,7 +433,8 @@ onBeforeUnmount(() => {
           <span v-if="cand.cls == 'rfi' && cand.rfi_reasons?.length" class="text-gray-500 dark:text-gray-400">{{ cand.rfi_reasons.join(', ') }}</span>
         </template>
         <div class="flex-1" />
-        <UCheckbox v-model="showTrack" label="Dispersion curve" />
+        <UCheckbox v-model="dedispOn" label="Dedispersed" />
+        <UCheckbox v-model="showTrack" :label="dedispOn ? 'Arrival' : 'Dispersion curve'" />
         <UCheckbox v-model="normOn" label="Normalise channels" />
         <UButton size="xs" variant="outline" label="Live pixel" icon="i-heroicons-signal" @click="emit('live')" />
       </div>
