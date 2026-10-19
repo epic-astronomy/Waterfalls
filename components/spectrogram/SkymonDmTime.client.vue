@@ -17,7 +17,9 @@ const props = defineProps<{
   cands: Point[],
   // pulsars to mark: name, short label and DM
   pulsars?: { name: string, label: string, dm: number }[],
-  open?: { node: string, id: string } | null
+  open?: { node: string, id: string } | null,
+  // band names by node, for the hover text
+  bands?: Record<string, string>
 }>()
 const emit = defineEmits<{ select: [c: Point] }>()
 
@@ -43,7 +45,7 @@ function draw() {
     traces.push({
       type: 'scattergl', mode: 'markers', name: NAMES[cls],
       x: pts.map(c => tz.plotTime(c.t_inf * 1000)), y: pts.map(c => c.dm), customdata: pts.map(c => `${c.node}|${c.id}`),
-      text: pts.map(c => `${c.node} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)}${c.known_source ? ', ' + c.known_source.name : ''}`),
+      text: pts.map(c => `${props.bands?.[c.node] ?? ''} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)}${c.known_source ? ', ' + c.known_source.name : ''}`),
       hovertemplate: '%{text}<br>%{x}<extra></extra>',
       marker: { size: pts.map(c => size(c.snr)), color: COLOURS[cls], opacity: cls == 'rfi' ? 0.45 : 0.85,
         line: { width: 0.5, color: dark ? '#111827' : '#ffffff' } }
@@ -70,8 +72,8 @@ function draw() {
     height: 260,
     margin: { t: 8, b: 40, l: 52, r: 74 },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-    xaxis: { title: { text: `Arrival at infinite frequency (${tz.zoneName()})`, font: { size: 11, color: ink } },
-      tickfont: { size: 10, color: ink }, gridcolor: grid, zeroline: false,
+    xaxis: { title: { text: `Arrival (${tz.zoneName()})`, font: { size: 11, color: ink } },
+      tickfont: { size: 10, color: ink }, gridcolor: grid, zeroline: false, tickformat: '%H:%M', nticks: 6,
       range: [tz.plotTime((t0 - pad) * 1000), tz.plotTime((t1 + pad) * 1000)] },
     yaxis: { type: 'log', title: { text: 'DM (pc cm⁻³)', font: { size: 11, color: ink } }, tickfont: { size: 10, color: ink },
       gridcolor: grid, zeroline: false, dtick: 1, range: [0, Math.log10(6000)] },

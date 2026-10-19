@@ -122,7 +122,7 @@ const bandLabel: Record<string, string> = {
 function bandText(name: string, b: BandState) {
   const v = b.candidate?.snr ?? b.followup?.snr
   const f = b.candidate?.fluence_jy_ms ?? b.followup?.fluence_jy_ms
-  return `${name} ${bandLabel[b.state ?? ''] ?? b.state ?? ''}${v != null ? ' ' + v.toFixed(1) : ''}` +
+  return `${bandName(name) || 'band'} ${bandLabel[b.state ?? ''] ?? b.state ?? ''}${v != null ? ' ' + v.toFixed(1) : ''}` +
     (f != null ? `, ${fluenceText(f)}` : '')
 }
 function solarText(r: Solar) {
@@ -235,6 +235,10 @@ watch([node, ra, dec, sinceH, showInjections, openCand, () => tab.value, () => f
 const markers = computed(() => cands.value
   .filter(c => c.node == node.value && (c.cls == 'candidate' || (showInjections.value && c.cls == 'injection')))
   .map(c => ({ ra: c.ra, dec: c.dec, color: c.cls == 'injection' ? '#38bdf8' : '#f59e0b', title: `S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)}` })))
+// what a viewer knows a monitor by: the band it observes, by its centre frequency
+const bandNames = computed(() => Object.fromEntries(nodes.value.filter(n => n.band)
+  .map(n => [n.node, `${((n.band!.f_lo + n.band!.f_hi) / 2).toFixed(1)} MHz`])) as Record<string, string>)
+const bandName = (node?: string | null) => (node && bandNames.value[node]) || ''
 const candCount = (n: Node) => n.candidates ? n.candidates.stored - n.candidates.rfi - n.candidates.injection : null
 const dmReach = (n: Node) => n.tiers?.length ? Math.round(n.tiers[n.tiers.length - 1].dm_max) : null
 watch(sinceH, () => { loadCands(); loadEvents() })
@@ -279,7 +283,8 @@ const pulsarRows = computed(() => pulsars.value.map(p => {
 const showQuietPulsars = ref(false)
 const shownPulsarRows = computed(() => pulsarRows.value.filter(r => r.n || showQuietPulsars.value))
 const openPulsar = ref<string | null>(null)
-const mapPulsars = computed(() => pulsars.value.map(p => ({ ra: p.ra_deg, dec: p.dec_deg, label: pulsarLabel(p.name), icon: hasIcon(p.name) })))
+const mapPulsars = computed(() => pulsars.value.map(p => ({ ra: p.ra_deg, dec: p.dec_deg, label: pulsarLabel(p.name), icon: hasIcon(p.name),
+  active: pulses.value.some(c => c.known_source?.name == p.name) })))
 watch(sinceH, loadPulsars)
 
 // pulsars with pulses among the candidates shown: their DMs are marked on the DM-time overview
@@ -351,8 +356,8 @@ useSeoMeta({
           <template #header>
             <div class="flex items-center gap-2">
               <span class="font-medium">Sky</span>
-              <span v-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">
-                seen by {{ selNode.node }}<template v-if="selNode.band"> at {{ selNode.band.f_lo.toFixed(2) }}–{{ selNode.band.f_hi.toFixed(2) }} MHz</template>, last 5 min
+              <span v-if="selNode?.band" class="text-sm text-gray-500 dark:text-gray-400">
+                {{ selNode.band.f_lo.toFixed(2) }}–{{ selNode.band.f_hi.toFixed(2) }} MHz, last 5 min
               </span>
             </div>
           </template>
@@ -363,8 +368,7 @@ useSeoMeta({
         <UCard :ui="{ body: { padding: 'p-1 sm:p-2' }, header: { padding: 'px-3 py-2 sm:px-4' } }">
           <template #header>
             <div class="flex items-center gap-2">
-              <span class="font-medium">Monitors</span>
-              <span class="text-sm text-gray-500 dark:text-gray-400">select one to show its sky</span>
+              <span class="font-medium">Bands</span>
               <div class="flex-1" />
               <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="nodesPending" aria-label="Reload the monitors" @click="loadNodes" />
             </div>
@@ -377,7 +381,7 @@ useSeoMeta({
             <table class="min-w-full text-sm">
               <thead class="text-left text-gray-500 dark:text-gray-400">
                 <tr>
-                  <th class="px-2 py-1">Node</th><th class="px-2 py-1">State</th><th class="px-2 py-1">Band (MHz)</th>
+                  <th class="px-2 py-1">Band (MHz)</th><th class="px-2 py-1">State</th>
                   <th class="px-2 py-1 text-right">Pixels</th><th class="px-2 py-1 text-right">DM reach</th>
                   <th class="px-2 py-1 text-right">Candidates</th>
                 </tr>
@@ -386,17 +390,16 @@ useSeoMeta({
                 <tr v-for="n in nodes" :key="n.node" class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
                   :class="n.node == node ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
                   @click="selectNode(n.node)">
-                  <td class="px-2 py-1 font-mono">{{ n.node }}</td>
+                  <td class="px-2 py-1 tabular-nums whitespace-nowrap">{{ n.band ? `${n.band.f_lo.toFixed(2)}–${n.band.f_hi.toFixed(2)}` : '' }}</td>
                   <td class="px-2 py-1">
                     <UBadge :color="!n.up ? 'red' : n.conditions?.latest?.disturbed ? 'orange' : 'green'" variant="subtle" size="xs"
                       :label="!n.up ? 'Not answering' : n.conditions?.latest?.disturbed ? 'Disturbed' : 'Running'" />
                   </td>
-                  <td class="px-2 py-1 tabular-nums whitespace-nowrap">{{ n.band ? `${n.band.f_lo.toFixed(2)}–${n.band.f_hi.toFixed(2)}` : '' }}</td>
                   <td class="px-2 py-1 text-right tabular-nums">{{ n.tracked ?? '' }}</td>
                   <td class="px-2 py-1 text-right tabular-nums" :title="dmReach(n) != null ? 'pc cm⁻³' : undefined">{{ dmReach(n) ?? '' }}</td>
                   <td class="px-2 py-1 text-right tabular-nums">{{ candCount(n) ?? '' }}</td>
                 </tr>
-                <tr v-if="!nodes.length && !nodesPending"><td colspan="6" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
+                <tr v-if="!nodes.length && !nodesPending"><td colspan="5" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
               </tbody>
             </table>
           </div>
@@ -406,25 +409,31 @@ useSeoMeta({
           <UTabs v-model="tab" :items="tabs" :ui="{ list: { width: 'w-full' } }">
             <template #frbs>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 py-2 text-sm">
-                <URadioGroup v-model="frbView" :options="[{ value: 'candidates', label: 'Candidates' }, { value: 'events', label: 'Events across bands' }]"
-                  :ui="{ fieldset: 'flex gap-4' }" />
+                <USelect v-model="frbView" size="xs" :options="[{ value: 'candidates', label: 'Candidates' }, { value: 'events', label: 'Events across bands' }]" />
+                <template v-if="frbView == 'candidates'">
+                  <UCheckbox v-model="showInjections" label="Test injections" />
+                  <UCheckbox v-model="showRfi" label="RFI" />
+                  <UCheckbox v-model="showKnown" label="Known sources" />
+                </template>
+                <template v-else>
+                  <UCheckbox v-model="showInjEvents" label="Test injections" />
+                  <UCheckbox v-model="showUnconfirmable" label="Not checkable" />
+                  <UCheckbox v-model="showReviewed" label="Reviewed" />
+                  <UCheckbox v-model="showTerrestrial" label="Terrestrial" />
+                  <UBadge v-if="combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
+                </template>
                 <div class="flex-1" />
                 <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="frbView == 'events' ? eventsPending : candsPending"
                   aria-label="Reload" @click="frbView == 'events' ? loadEvents() : loadCands()" />
               </div>
               <!-- candidates of all monitors -->
               <template v-if="frbView == 'candidates'">
-                <SpectrogramSkymonDmTime :cands="shownCands" :pulsars="dmtPulsars" :open="openCand" @select="showCandidate" />
-                <div class="flex flex-wrap items-center gap-4 px-1 pb-2 text-sm">
-                  <UCheckbox v-model="showInjections" label="Test injections" />
-                  <UCheckbox v-model="showRfi" label="RFI" />
-                  <UCheckbox v-model="showKnown" label="Known sources" />
-                </div>
+                <SpectrogramSkymonDmTime :cands="shownCands" :pulsars="dmtPulsars" :open="openCand" :bands="bandNames" @select="showCandidate" />
                 <div class="overflow-auto max-h-[32rem]">
                   <table class="min-w-full text-sm">
                     <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900 z-10">
                       <tr>
-                        <th class="px-2 py-1">Arrival ({{ tz.zoneName() }})</th><th class="px-2 py-1">Node</th>
+                        <th class="px-2 py-1">Arrival ({{ tz.zoneName() }})</th><th class="px-2 py-1">Band</th>
                         <th class="px-2 py-1 text-right">S/N</th><th class="px-2 py-1 text-right">DM</th><th class="px-2 py-1">Class</th>
                       </tr>
                     </thead>
@@ -434,7 +443,7 @@ useSeoMeta({
                         :title="`RA ${c.ra.toFixed(2)}°, Dec ${c.dec.toFixed(2)}°, elevation ${c.el.toFixed(0)}°, width ${c.width_s.toFixed(2)} s`"
                         @click="showCandidate(c)">
                         <td class="px-2 py-1 font-mono whitespace-nowrap">{{ tz.dateTime(c.t_inf * 1000) }}</td>
-                        <td class="px-2 py-1 font-mono">{{ c.node }}</td>
+                        <td class="px-2 py-1 whitespace-nowrap">{{ bandName(c.node) }}</td>
                         <td class="px-2 py-1 text-right tabular-nums">{{ c.snr.toFixed(1) }}</td>
                         <td class="px-2 py-1 text-right tabular-nums">{{ c.dm.toFixed(1) }}</td>
                         <td class="px-2 py-1">
@@ -453,13 +462,6 @@ useSeoMeta({
               </template>
               <!-- events of the combiner -->
               <template v-else>
-                <div class="flex flex-wrap items-center gap-4 px-1 pb-2 text-sm">
-                  <UCheckbox v-model="showInjEvents" label="Test injections" />
-                  <UCheckbox v-model="showUnconfirmable" label="Not checkable" />
-                  <UCheckbox v-model="showReviewed" label="Already reviewed" />
-                  <UCheckbox v-model="showTerrestrial" label="Terrestrial" />
-                  <UBadge v-if="combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
-                </div>
                 <div class="overflow-auto max-h-[32rem]">
                   <table class="min-w-full text-sm">
                     <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900 z-10">
@@ -499,11 +501,11 @@ useSeoMeta({
                             </p>
                             <p v-if="e.kind == 'terrestrial'" class="text-xs text-gray-600 dark:text-gray-300">
                               {{ e.reason }}<template v-if="e.candidates?.length">. Candidates
-                                {{ e.candidates.map(c => `${c.node} S/N ${c.snr.toFixed(1)} at DM ${c.dm.toFixed(1)}`).join(', ') }}.</template>
+                                {{ e.candidates.map(c => `${bandName(c.node)} S/N ${c.snr.toFixed(1)} at DM ${c.dm.toFixed(1)}`).join(', ') }}.</template>
                             </p>
                             <p v-if="e.other_dm?.length" class="text-xs text-gray-600 dark:text-gray-300">
                               Also found at this position during the sweep, at other DMs, with data kept
-                              {{ e.other_dm.map(o => `${o.node} S/N ${o.snr.toFixed(1)} at DM ${o.dm.toFixed(1)}`).join(', ') }}.
+                              {{ e.other_dm.map(o => `${bandName(o.node)} S/N ${o.snr.toFixed(1)} at DM ${o.dm.toFixed(1)}`).join(', ') }}.
                               Each is the same burst at a neighbouring trial DM, or a second burst.
                             </p>
                             <div v-if="e.context" class="text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
@@ -548,7 +550,6 @@ useSeoMeta({
 
             <template #pulsars>
               <div class="flex flex-wrap items-center gap-4 px-1 py-2 text-sm">
-                <span class="text-gray-500 dark:text-gray-400">Single pulses found at the position and DM of a known pulsar</span>
                 <div class="flex-1" />
                 <UCheckbox v-model="showQuietPulsars" label="Pulsars without pulses" />
               </div>
@@ -581,7 +582,7 @@ useSeoMeta({
                         <tr v-for="c in r.pulses" :key="c.node + c.id" class="cursor-pointer text-xs"
                           :class="isOpen(c) ? 'bg-primary-50 dark:bg-primary-950/40' : 'bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800'"
                           @click="showCandidate(c)">
-                          <td class="pl-8 pr-2 py-1 font-mono">{{ c.node }}</td>
+                          <td class="pl-8 pr-2 py-1 whitespace-nowrap">{{ bandName(c.node) }}</td>
                           <td class="px-2 py-1 text-right tabular-nums">{{ c.dm.toFixed(1) }}</td>
                           <td class="px-2 py-1" />
                           <td class="px-2 py-1" />
@@ -606,8 +607,8 @@ useSeoMeta({
           <template #header>
             <div class="flex flex-wrap items-center gap-3">
               <span class="font-medium">{{ openCand ? 'Candidate' : 'Spectrogram' }}</span>
-              <span v-if="openCand" class="text-sm text-gray-500 dark:text-gray-400 truncate">{{ openCand.node }}, {{ openCand.id }}</span>
-              <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ selNode.node }}, live pixel</span>
+              <span v-if="openCand" class="text-sm text-gray-500 dark:text-gray-400">{{ bandName(openCand.node) }}</span>
+              <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ bandName(selNode.node) }}, live</span>
               <div class="flex-1" />
               <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-24" @keyup.enter="showPosition" />
               <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-24" @keyup.enter="showPosition" />
@@ -619,9 +620,7 @@ useSeoMeta({
             @live="openCand = null; mark = null" />
           <SpectrogramSkymonSpectrogram v-else-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
             :hpix="pickedHpix" :dt-image="selNode?.band?.dt" :t-inf="mark?.tInf" :dm="mark?.dm" />
-          <p v-else class="text-center text-gray-500 dark:text-gray-400 py-16">
-            Click a pixel on the sky, a candidate, an event or a pulsar's pulse, or enter a position.
-          </p>
+          <p v-else class="text-center text-gray-500 dark:text-gray-400 py-16">Select a pixel, a candidate or a pulse.</p>
         </UCard>
       </div>
     </div>

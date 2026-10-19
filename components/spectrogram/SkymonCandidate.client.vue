@@ -289,7 +289,7 @@ function drawMain() {
     title: { text: `${clsTitle.value} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)} - ${fc.toFixed(2)} MHz | LWA-Sevilleta`,
       font: font(el.clientWidth < 760 ? 14 : 18) },
     xaxis: { range: [tz.plotTime(w[0]), tz.plotTime(w[1])], title: { text: `Time (${tz.zoneName(w[0])})`, font: font(16) },
-      tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, anchor: 'y' },
+      tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, anchor: 'y', tickformat: '%H:%M:%S', nticks: 6 },
     yaxis: { domain: [0, 0.74], range: [b.lo, b.hi], title: { text: 'Frequency (MHz)', font: font(16) }, tickfont: { color: ink }, tickcolor: ink },
     yaxis2: { domain: [0.79, 1], title: { text: 'S/N', font: font(13) }, tickfont: { color: ink }, tickcolor: ink, zeroline: false },
     paper_bgcolor: dark ? '#131826' : 'rgb(255,255,255)',
@@ -360,7 +360,7 @@ function drawDmt() {
     height: 520,
     margin: { t: 45, b: 55, l: 70, r: 20 },
     title: { text: 'DM-time plane', font: font(18) },
-    xaxis: { title: { text: `Time (${tz.zoneName(d.dynspec_t[0] * 1000)})`, font: font(16) }, tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, nticks: 4, range: xView },
+    xaxis: { title: { text: `Time (${tz.zoneName(d.dynspec_t[0] * 1000)})`, font: font(16) }, tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, nticks: 3, tickformat: '%H:%M:%S', range: xView },
     yaxis: { title: { text: 'DM (pc cm⁻³)', font: font(16) }, tickfont: { color: ink }, tickcolor: ink, range: [plane.dms[0], plane.dms[plane.dms.length - 1]] },
     paper_bgcolor: dark ? '#131826' : 'rgb(255,255,255)',
     plot_bgcolor: dark ? '#374151' : '#d1d5db',
@@ -369,12 +369,6 @@ function drawDmt() {
 }
 
 function drawAll() { drawBackground(); drawMain(); drawDmt() }
-
-// the search kept less than the sweep before the burst: the plane is blank there
-const shortBefore = computed(() => {
-  const t = data.value?.dynspec_t, sw = sweep.value
-  return !!t?.length && !!sw && t[0] > sw[0] - Math.max(5, 1.5 * (sw[1] - sw[0]))
-})
 
 const clsTitle = computed(() => ({ candidate: 'Candidate', injection: 'Test injection', rfi: 'RFI', known: 'Known source' } as Record<string, string>)[cand.value?.cls ?? ''] ?? 'Candidate')
 const clsColor: Record<string, string> = { candidate: 'amber', injection: 'sky', rfi: 'gray', known: 'violet' }
@@ -408,84 +402,66 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-2">
-    <UCard :ui="{ body: { padding: 'px-3 py-2' } }">
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <template v-if="cand">
-          <UBadge :color="clsColor[cand.cls] ?? 'amber'" variant="subtle" size="xs" :label="clsTitle" />
-          <span>S/N {{ cand.snr.toFixed(1) }}</span>
-          <span>DM {{ cand.dm.toFixed(1) }}<template v-if="cand.dm_step"> ± {{ (cand.dm_step / 2).toFixed(1) }}</template> pc cm⁻³</span>
-          <span>width {{ cand.width_s.toFixed(2) }} s</span>
-          <span v-if="cand.flux">{{ fluenceText(cand.flux.fluence_jy_ms) }}</span>
-          <span>RA {{ cand.ra.toFixed(2) }}°, Dec {{ cand.dec.toFixed(2) }}°, elevation {{ cand.el.toFixed(0) }}°</span>
-          <span class="text-gray-500 dark:text-gray-400">
-            arrival {{ tz.dateTime(cand.t_inf * 1000) }} {{ tz.zoneName(cand.t_inf * 1000) }} at infinite frequency<template v-if="sweep">,
-            {{ tz.clock(sweep[0] * 1000) }} to {{ tz.clock(sweep[1] * 1000) }} across this band</template>
-          </span>
-          <span v-if="data?.injection" class="text-amber-600 dark:text-amber-400">
-            injected at DM {{ data.injection.dm.toFixed(1) }} with S/N {{ data.injection.snr_target.toFixed(0) }}
-          </span>
-          <span v-if="cand.known_source?.kind == 'pulsar'">
-            <SpectrogramSkymonPulsarName :name="cand.known_source.name" :alias="cand.known_source.alias" :size="24" />
-            {{ cand.known_source.giant_pulse ? 'giant pulse' : 'single pulse' }}
-          </span>
-          <span v-else-if="cand.known_source" class="text-gray-500 dark:text-gray-400">{{ cand.known_source.name }}</span>
-          <span v-if="cand.cls == 'rfi' && cand.rfi_reasons?.length" class="text-gray-500 dark:text-gray-400">{{ cand.rfi_reasons.join(', ') }}</span>
-        </template>
-        <div class="flex-1" />
+  <!-- one section of the viewer: summary, window, then the plots, divided by rules -->
+  <div class="divide-y divide-gray-200 dark:divide-gray-800">
+    <div class="pb-2 space-y-1">
+      <div v-if="cand" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <UBadge :color="clsColor[cand.cls] ?? 'amber'" variant="subtle" size="xs" :label="clsTitle" />
+        <span v-if="cand.known_source?.kind == 'pulsar'">
+          <SpectrogramSkymonPulsarName :name="cand.known_source.name" :alias="cand.known_source.alias" :size="22" />
+          {{ cand.known_source.giant_pulse ? 'giant pulse' : 'single pulse' }}
+        </span>
+        <span v-else-if="cand.known_source" class="text-gray-500 dark:text-gray-400">{{ cand.known_source.name }}</span>
+        <span class="tabular-nums">S/N {{ cand.snr.toFixed(1) }}</span>
+        <span class="tabular-nums">DM {{ cand.dm.toFixed(1) }}<template v-if="cand.dm_step"> ± {{ (cand.dm_step / 2).toFixed(1) }}</template></span>
+        <span class="tabular-nums">{{ cand.width_s.toFixed(2) }} s</span>
+        <span v-if="cand.flux" class="tabular-nums">{{ fluenceText(cand.flux.fluence_jy_ms) }}</span>
+        <span v-if="data?.injection" class="text-amber-600 dark:text-amber-400 tabular-nums">
+          injected DM {{ data.injection.dm.toFixed(1) }}, S/N {{ data.injection.snr_target.toFixed(0) }}
+        </span>
+        <span v-if="cand.dm_arms?.length" class="text-gray-500 dark:text-gray-400"
+          :title="cand.dm_arms.map(a => `DM ${a.dm.toFixed(1)}, S/N ${a.snr.toFixed(1)}`).join('; ')">
+          {{ cand.dm_arms.length }} weaker at other DMs
+        </span>
+        <span v-if="cand.cls == 'rfi' && cand.rfi_reasons?.length" class="text-gray-500 dark:text-gray-400">{{ cand.rfi_reasons.join(', ') }}</span>
+      </div>
+      <div v-if="cand" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+        <span>RA {{ cand.ra.toFixed(2) }}°, Dec {{ cand.dec.toFixed(2) }}°, el {{ cand.el.toFixed(0) }}°</span>
+        <span>{{ tz.dateTime(cand.t_inf * 1000) }} {{ tz.zoneName(cand.t_inf * 1000) }}<template v-if="sweep">, in band {{ tz.clock(sweep[0] * 1000) }}–{{ tz.clock(sweep[1] * 1000) }}</template></span>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-sm">
         <UCheckbox v-model="dedispOn" label="Dedispersed" />
         <UCheckbox v-model="showTrack" :label="dedispOn ? 'Arrival' : 'Dispersion curve'" />
-        <UCheckbox v-model="normOn" label="Normalise channels" />
+        <UCheckbox v-model="normOn" label="Normalise" />
+        <div class="flex-1" />
         <UButton size="xs" variant="outline" label="Live pixel" icon="i-heroicons-signal" @click="emit('live')" />
       </div>
-    </UCard>
+    </div>
 
     <SpectrogramSkymonLoading v-if="pending" :key="id" :messages="[
-      `Asking ${node} for the data kept with this candidate`,
+      'Asking the monitor for the data kept with this candidate',
       'Reading its dynamic spectrum and DM-time plane',
       'Reading the 30 min of averages before it',
       'Drawing the candidate']" />
-    <UAlert v-else-if="error" color="red" variant="soft" icon="i-heroicons-exclamation-triangle" :title="error" />
+    <UAlert v-else-if="error" color="red" variant="soft" icon="i-heroicons-exclamation-triangle" :title="error" class="my-2" />
 
-    <div v-show="data && !pending" class="space-y-2">
-      <UCard :ui="{ body: { padding: 'px-3 py-2' } }">
-        <div class="flex flex-wrap items-center gap-2 mb-2 text-sm">
-          <span>Context before the burst</span>
-          <USelect v-model="contextMin" size="xs" :options="[{ label: '2 min', value: 2 }, { label: '10 min', value: 10 }, { label: '30 min', value: 30 }]" />
-        </div>
-        <SpectrogramTimeRangeSlider v-if="span" v-model="window_" :start="span[0]" :end="span[1]" :min-span-ms="3000"
-          :height="64" seconds full-label="Whole span">
-          <template #background>
-            <canvas ref="bg" class="w-full h-full block" />
-          </template>
-        </SpectrogramTimeRangeSlider>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Drag the window or its ends to choose the time shown. Behind it, the 10 s averages before the burst and,
-          at the search resolution, the sweep of the burst, with its expected track in amber.
-        </p>
-      </UCard>
-      <div class="grid grid-cols-1 xl:grid-cols-3 gap-2">
-        <UCard class="xl:col-span-2" :ui="{ body: { padding: 'px-1 py-1 sm:p-1' } }">
-          <div :id="mainId" ref="mainDiv" />
-          <p class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
-            The pulse above is the spectrum summed along the burst's track, at the arrival at the top of the band.
-            The dashed curve is the track at the DM found<template v-if="data?.injection">, the amber dotted one at the DM injected</template>.
-            The 10 s averages are drawn where the search resolution was not kept.
-          </p>
-        </UCard>
-        <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1' } }">
-          <div :id="dmtId" ref="dmtDiv" />
-          <p class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
-            Computed from the dynamic spectrum around the DM found, which the dashed line marks<template v-if="data?.injection">; the amber dotted line marks the DM injected</template>.
-            A burst shows as a cross centred on its DM and arrival.
-            <template v-if="shortBefore"> The search keeps one window of data at this resolution, and for a DM near the top of its search range that window begins about when the burst arrives, so the plane is blank before it.</template>
-          </p>
-          <p v-if="cand?.dm_arms?.length" class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
-            The same burst also passed the threshold at other trial DMs, smeared, and these detections were merged into this one:
-            {{ cand.dm_arms.map(a => `DM ${a.dm.toFixed(1)} at S/N ${a.snr.toFixed(1)}`).join(', ') }}.
-          </p>
-        </UCard>
+    <div v-show="data && !pending" class="py-2">
+      <div class="flex items-center gap-2 mb-1 text-xs text-gray-500 dark:text-gray-400">
+        <span>Window</span>
+        <div class="flex-1" />
+        <span>Before the burst</span>
+        <USelect v-model="contextMin" size="2xs" :options="[{ label: '2 min', value: 2 }, { label: '10 min', value: 10 }, { label: '30 min', value: 30 }]" />
       </div>
+      <SpectrogramTimeRangeSlider v-if="span" v-model="window_" :start="span[0]" :end="span[1]" :min-span-ms="3000"
+        :height="56" seconds full-label="Whole span">
+        <template #background>
+          <canvas ref="bg" class="w-full h-full block" />
+        </template>
+      </SpectrogramTimeRangeSlider>
+    </div>
+    <div v-show="data && !pending" class="pt-2 grid grid-cols-1 2xl:grid-cols-3 gap-2">
+      <div class="2xl:col-span-2 min-w-0"><div :id="mainId" ref="mainDiv" /></div>
+      <div class="min-w-0"><div :id="dmtId" ref="dmtDiv" /></div>
     </div>
   </div>
 </template>

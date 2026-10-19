@@ -20,7 +20,7 @@ const props = defineProps<{
   selected?: number | null,
   markers?: Marker[],
   // the pulsars the monitors know: label is drawn beside a small diamond
-  pulsars?: { ra: number, dec: number, label: string, icon: boolean }[],
+  pulsars?: { ra: number, dec: number, label: string, icon: boolean, active?: boolean }[],
   seconds?: number
 }>()
 const emit = defineEmits<{
@@ -243,41 +243,55 @@ function render() {
     const p = project(ra, dec, ra0, LAT)
     return p.n > 0 ? toScreen(p.l, p.m) : null
   }
+  // labels: placed right of their mark, or left of it at the right edge, and left out
+  // where they would cover one already placed (sources first, then pulsars that pulsed)
+  const placed: [number, number, number, number][] = []
+  const free = (x: number, y: number, w: number, h: number) =>
+    x >= 0 && y >= 0 && x + w <= W && y + h <= H && !placed.some(([a, b, c, d]) => x < a + c && a < x + w && y < b + d && b < y + h)
+  function label(text: string, q: number[], colour: string, px: number, off: number) {
+    ctx.font = `${px * dpr}px ui-sans-serif, system-ui, sans-serif`
+    const w = ctx.measureText(text).width, h = px * 1.2 * dpr
+    for (const x of [q[0] + off * dpr, q[0] - off * dpr - w]) {
+      const y = q[1] - h / 2
+      if (!free(x, y, w, h)) continue
+      placed.push([x, y, w, h])
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+      ctx.fillStyle = colour
+      ctx.shadowColor = 'black'; ctx.shadowBlur = 3 * dpr
+      ctx.fillText(text, x, q[1])
+      ctx.shadowBlur = 0
+      return
+    }
+  }
   if (showLabels.value) {
-    ctx.font = `${11 * dpr}px ui-sans-serif, system-ui, sans-serif`
-    ctx.textAlign = 'left'
     for (const s of BRIGHT) {
       const q = mark(s.ra, s.dec)
       if (!q) continue
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = dpr
       ctx.beginPath(); ctx.arc(q[0], q[1], 7 * dpr, 0, 2 * Math.PI); ctx.stroke()
-      ctx.fillStyle = 'white'
-      ctx.shadowColor = 'black'; ctx.shadowBlur = 3 * dpr
-      ctx.fillText(s.name, q[0] + 9 * dpr, q[1] - 6 * dpr)
-      ctx.shadowBlur = 0
+      label(s.name, q, 'white', 11, 10)
     }
   }
   if (showPulsars.value) {
-    for (const p of props.pulsars ?? []) {
+    const ps = [...(props.pulsars ?? [])].sort((a, b) => Number(!!b.icon) - Number(!!a.icon) || Number(!!b.active) - Number(!!a.active))
+    for (const p of ps) {
       const q = mark(p.ra, p.dec)
       if (!q) continue
       const r = 4 * dpr
-      ctx.fillStyle = '#e879f9'
+      ctx.fillStyle = p.active ? '#e879f9' : 'rgba(232,121,249,0.55)'
       ctx.strokeStyle = 'rgba(0,0,0,0.6)'
       ctx.lineWidth = dpr
       ctx.beginPath(); ctx.moveTo(q[0], q[1] - r); ctx.lineTo(q[0] + r, q[1]); ctx.lineTo(q[0], q[1] + r); ctx.lineTo(q[0] - r, q[1]); ctx.closePath()
       ctx.fill(); ctx.stroke()
       if (p.icon) {
         // the Crab sits in Tau A: its icon goes below the nebula's label
-        if (crabImg?.complete) ctx.drawImage(crabImg, q[0] + 5 * dpr, q[1] + 2 * dpr, 20 * dpr, 20 * dpr)
+        const sz = 18 * dpr, x = q[0] + 4 * dpr, y = q[1] + 3 * dpr
+        if (crabImg?.complete) ctx.drawImage(crabImg, x, y, sz, sz)
+        placed.push([x, y, sz, sz])
         continue
       }
-      ctx.font = `${10 * dpr}px ui-sans-serif, system-ui, sans-serif`
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
-      ctx.fillStyle = '#f5d0fe'
-      ctx.shadowColor = 'black'; ctx.shadowBlur = 3 * dpr
-      ctx.fillText(p.label, q[0] + 7 * dpr, q[1] + 6 * dpr)
-      ctx.shadowBlur = 0
+      // the others are named when they pulsed in the period, or when zoomed in
+      if (p.active || view.zoom >= 2) label(p.label, q, '#f5d0fe', 10, 7)
     }
   }
   for (const mk of props.markers ?? []) {
@@ -300,8 +314,10 @@ function clampView() {
   view.m0 = Math.max(-lim, Math.min(lim, view.m0))
 }
 function local(e: PointerEvent | WheelEvent | MouseEvent) {
+  // canvas pixels per CSS pixel, whatever size the canvas is shown at
   const r = canvas.value!.getBoundingClientRect()
-  return [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr, e.clientX - r.left, e.clientY - r.top]
+  const k = r.width > 0 ? W / r.width : dpr
+  return [(e.clientX - r.left) * k, (e.clientY - r.top) * k, e.clientX - r.left, e.clientY - r.top]
 }
 function onDown(e: PointerEvent) {
   canvas.value!.setPointerCapture(e.pointerId)
@@ -369,7 +385,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   ro = new ResizeObserver(es => {
     const w = es[0]?.contentRect.width ?? 0
-    if (w > 0) { size.value = Math.round(Math.min(w, 620)); draw() }
+    if (w > 0) { size.value = Math.round(Math.min(w, 620, Math.max(280, window.innerHeight * 0.55))); draw() }
   })
   if (wrap.value) ro.observe(wrap.value)
   load()
@@ -383,8 +399,7 @@ watch(flatten, () => { prepare(); draw() })
 const spanText = computed(() => {
   const m = map.value
   if (!m?.t_start || !m.t_end) return ''
-  return `Mean of ${tz.clock(m.t_start * 1000)} to ${tz.clock(m.t_end * 1000)} ${tz.zoneName(m.t_end * 1000)}, ` +
-    `${m.f_lo?.toFixed(2)}–${m.f_hi?.toFixed(2)} MHz, nside ${m.nside}`
+  return `${tz.clock(m.t_start * 1000).slice(0, 5)}–${tz.clock(m.t_end * 1000).slice(0, 5)} ${tz.zoneName(m.t_end * 1000)}`
 })
 </script>
 
@@ -392,22 +407,39 @@ const spanText = computed(() => {
   <div class="space-y-2">
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <USelect v-model="stretch" size="xs" :options="[{ label: 'Asinh', value: 'asinh' }, { label: 'Linear', value: 'linear' }]" />
-      <UCheckbox v-model="flatten" label="Flatten" title="Subtract the median at each elevation, which removes the fall of the primary beam towards the horizon" />
-      <UCheckbox v-model="showGrid" label="Pixel grid" />
-      <UCheckbox v-model="showLabels" label="Bright sources" />
-      <UCheckbox v-model="showPulsars" label="Pulsars" />
-      <div class="flex flex-1 justify-end">
-      <UButton size="2xs" variant="ghost" icon="i-heroicons-plus" aria-label="Zoom in" @click="zoomBy(1.6)" />
-      <UButton size="2xs" variant="ghost" icon="i-heroicons-minus" aria-label="Zoom out" @click="zoomBy(1 / 1.6)" />
-      <UButton size="2xs" variant="ghost" icon="i-heroicons-arrows-pointing-out" aria-label="Whole sky" @click="resetView" />
-      <UButton size="2xs" variant="ghost" icon="i-heroicons-arrow-path" aria-label="Reload" :loading="pending" @click="load" />
-      </div>
+      <UPopover>
+        <UButton size="xs" color="gray" variant="outline" label="Show" trailing-icon="i-heroicons-chevron-down-20-solid" />
+        <template #panel>
+          <div class="p-3 space-y-2 text-sm">
+            <UCheckbox v-model="flatten" label="Flatten" title="Subtract the median at each elevation, which removes the fall of the primary beam towards the horizon" />
+            <UCheckbox v-model="showGrid" label="Pixel grid" />
+            <UCheckbox v-model="showLabels" label="Bright sources" />
+            <UCheckbox v-model="showPulsars" label="Pulsars" />
+          </div>
+        </template>
+      </UPopover>
+      <span v-if="spanText" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ spanText }}</span>
     </div>
-    <div ref="wrap" class="relative w-full">
-      <canvas ref="canvas" class="block mx-auto touch-none select-none cursor-crosshair rounded"
-        :style="{ width: size + 'px', height: size + 'px' }"
+    <div ref="wrap" class="w-full">
+     <div class="relative mx-auto max-w-full" :style="{ width: size + 'px' }">
+      <canvas ref="canvas" class="block w-full touch-none select-none cursor-crosshair rounded aspect-square"
         @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointerleave="hover = null; drag = null"
         @wheel.prevent="onWheel" @dblclick="e => { const [sx, sy] = local(e); zoomAt(sx, sy, 2) }" />
+      <!-- zoom controls, in the lower right corner of the map -->
+      <div class="absolute bottom-2 right-2 z-10 flex flex-col rounded-md bg-white/85 dark:bg-gray-900/85 ring-1 ring-gray-200 dark:ring-gray-700 shadow">
+        <UTooltip text="Zoom in" :popper="{ placement: 'left' }">
+          <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-plus" aria-label="Zoom in" @click="zoomBy(1.6)" />
+        </UTooltip>
+        <UTooltip text="Zoom out" :popper="{ placement: 'left' }">
+          <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-minus" aria-label="Zoom out" @click="zoomBy(1 / 1.6)" />
+        </UTooltip>
+        <UTooltip text="Whole sky" :popper="{ placement: 'left' }">
+          <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-arrows-pointing-out" aria-label="Whole sky" :disabled="view.zoom == 1 && !view.l0 && !view.m0" @click="resetView" />
+        </UTooltip>
+        <UTooltip text="Reload" :popper="{ placement: 'left' }">
+          <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-path" aria-label="Reload" :loading="pending" @click="load" />
+        </UTooltip>
+      </div>
       <div v-if="hover" class="pointer-events-none absolute z-10 rounded bg-gray-900/85 px-2 py-1 text-xs text-white tabular-nums"
         :style="{ left: Math.min(hover.x + 14, size - 170) + 'px', top: hover.y + 14 + 'px' }">
         <div>RA {{ hover.ra.toFixed(2) }}°, Dec {{ hover.dec.toFixed(2) }}°</div>
@@ -422,7 +454,7 @@ const spanText = computed(() => {
       </div>
       <div v-else-if="!map && pending" class="absolute inset-0 flex items-center justify-center pointer-events-none">
         <SpectrogramSkymonLoading :key="node ?? ''" class="rounded bg-white/85 dark:bg-gray-900/85 px-6" :messages="[
-          `Asking ${node} for its sky`,
+          'Asking the monitor for its sky',
           'Averaging the last 5 min of every tracked pixel',
           'Receiving the HEALPix map',
           'Projecting the sky onto the view']" />
@@ -430,10 +462,8 @@ const spanText = computed(() => {
       <div v-else-if="!node || (!map && !pending)" class="absolute inset-0 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 pointer-events-none">
         {{ !node ? 'No monitor is answering.' : error || 'No sky map.' }}
       </div>
+     </div>
     </div>
-    <p class="text-xs text-gray-500 dark:text-gray-400">
-      {{ spanText }}<template v-if="spanText">. </template>Drag to pan, scroll to zoom, click a pixel for its spectrogram.
-      <span v-if="error && map" class="text-red-500">{{ error }}</span>
-    </p>
+    <p v-if="error && map" class="text-xs text-red-500">{{ error }}</p>
   </div>
 </template>

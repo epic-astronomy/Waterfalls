@@ -173,7 +173,8 @@ function draw() {
     title: { text: `RA ${(b.ra ?? props.ra).toFixed(2)}° Dec ${(b.dec ?? props.dec).toFixed(2)}° - ${fc.toFixed(2)} MHz | LWA-Sevilleta`, font: font(20) },
     xaxis: {
       title: { text: `Time (${tz.zoneName(times.length ? times[0] * 1000 : Date.now())})`, font: font(18) },
-      tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink,
+      tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, nticks: 6,
+      tickformat: resolution.value == 'live' ? '%H:%M:%S' : '%H:%M',
       range: x.length ? [x[0], x[x.length - 1]] : undefined
     },
     yaxis: {
@@ -222,48 +223,41 @@ const hoursOptions = [{ label: 'last 30 min', value: 0.5 }, { label: 'last 1 h',
 </script>
 
 <template>
-  <div>
-    <UCard :ui="{ body: { padding: 'px-2 py-2 sm:p-2 m-2' } }">
-      <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-2">
-        <div class="flex items-center gap-2">
-          <span class="text-sm">Resolution</span>
-          <USelect v-model="resolution" :options="resolutionOptions" />
-          <USelect v-if="resolution == 'avg'" v-model="hours" :options="hoursOptions" />
-        </div>
-        <div class="flex items-center gap-x-6">
-          <UCheckbox v-if="tInf != null && dm != null" v-model="showDispersion" label="Dispersion curve" />
-          <UCheckbox v-model="normOn" label="Normalise channels" />
-          <div class="flex items-center gap-2">
-            <UCheckbox v-model="rfiOn" label="Flag RFI" />
-            <UIcon v-show="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
-            <span v-show="rfiOn && !rfiPending && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged?.toFixed(1) }}% flagged</span>
-          </div>
-          <UCheckbox v-model="autoOn" label="Update" />
-        </div>
+  <!-- one section of the viewer: controls, then the plot, divided by a rule -->
+  <div class="divide-y divide-gray-200 dark:divide-gray-800">
+    <div class="pb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+      <USelect v-model="resolution" size="xs" :options="resolutionOptions" />
+      <USelect v-if="resolution == 'avg'" v-model="hours" size="xs" :options="hoursOptions" />
+      <UCheckbox v-if="tInf != null && dm != null" v-model="showDispersion" label="Dispersion curve" />
+      <UCheckbox v-model="normOn" label="Normalise" />
+      <div class="flex items-center gap-2">
+        <UCheckbox v-model="rfiOn" label="Flag RFI" />
+        <UIcon v-show="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
+        <span v-show="rfiOn && !rfiPending && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged?.toFixed(1) }}%</span>
       </div>
-    </UCard>
-    <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
+      <UCheckbox v-model="autoOn" label="Update" />
+      <span v-if="hasData" class="ml-auto text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+        RA {{ (band?.ra ?? ra).toFixed(2) }}°, Dec {{ (band?.dec ?? dec).toFixed(2) }}°, el {{ band?.el?.toFixed(0) }}°
+      </span>
+    </div>
+    <div class="relative pt-2">
       <SpectrogramSkymonLoading v-if="pending && !hasData" :key="`${node}-${hpix ?? ra}-${dec}-${resolution}`" :messages="resolution == 'live' ? [
-        `Asking ${node} for this pixel`,
+        'Asking the monitor for this pixel',
         'Reading the latest search window',
         'Receiving the spectrogram',
         'Drawing the spectrogram'] : [
-        `Asking ${node} for this pixel`,
+        'Asking the monitor for this pixel',
         `Reading the 10 s averages of the last ${hours < 1 ? hours * 60 + ' min' : hours + ' h'}`,
         'Receiving the spectrogram',
         'Drawing the spectrogram']" />
       <UProgress v-else-if="pending" animation="carousel" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <UAlert v-if="error" color="red" variant="soft" icon="i-heroicons-exclamation-triangle" :title="error" class="mb-1" />
       <p v-if="!pending && band && band.up && !hasData" class="p-4 text-sm text-gray-500 dark:text-gray-400">
-        {{ band.tracked ? 'No data for this pixel in the selected span yet.' : 'This monitor does not track this position. A position is tracked while it is above the elevation limit.' }}
+        {{ band.tracked ? 'No data for this pixel yet.' : 'Below the elevation limit in this band.' }}
       </p>
       <div class="transition-opacity" :class="rfiOn && rfiPending ? 'opacity-40' : ''">
         <div :id="divId" ref="plotDiv" />
       </div>
-      <p v-if="hasData" class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
-        HEALPix {{ band?.hpix }} (nside {{ band?.nside }}), elevation {{ band?.el?.toFixed(1) }}°.
-        {{ band?.kind == 'fine' ? 'The latest search window, each channel normalised by the monitor.' : `Raw values, ${band?.interval_s?.toFixed(1)} s per row.` }}
-      </p>
-    </UCard>
+    </div>
   </div>
 </template>
