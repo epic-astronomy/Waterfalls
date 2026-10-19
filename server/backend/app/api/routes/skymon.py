@@ -176,6 +176,16 @@ def candidate_data(node: str, cid: str):
         c.pop(k, None)
     c["node"] = node
     out["candidate"] = c
+    # a test injection: what was injected, to compare with what was found
+    if c.get("injection_id"):
+        try:
+            inj = _get(f"{url}/api/injections", settings.SKYMON_TIMEOUT_S)
+            for r in (inj.get("in_progress") or []) + (inj.get("recent") or []):
+                if r.get("id") == c["injection_id"]:
+                    out["injection"] = {k: r.get(k) for k in ("id", "dm", "t_inf", "snr_target", "ra", "dec")}
+                    break
+        except Exception:
+            pass
     return out
 
 

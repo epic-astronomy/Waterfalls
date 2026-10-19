@@ -17,8 +17,11 @@ interface CandData {
     t_inf: number, t_top?: number, t_bottom?: number, ra: number, dec: number, el: number, tier: number,
     f_lo_mhz: number, f_hi_mhz: number, injection_id?: string | null,
     known_source?: { kind: string, name: string } | null, rfi_reasons?: string[],
-    flux?: { fluence_jy_ms: number, fluence_err_jy_ms?: number | null } | null
-  }
+    flux?: { fluence_jy_ms: number, fluence_err_jy_ms?: number | null } | null,
+    dm_arms?: { id: string, dm: number, snr: number, tier: number }[]
+  },
+  // for a test injection, what was injected
+  injection?: { id: string, dm: number, t_inf: number, snr_target: number } | null
 }
 
 const props = defineProps<{ node: string, id: string }>()
@@ -36,8 +39,8 @@ const normOn = useState('skymon-cand-normalise', () => true)
 const showTrack = ref(true)
 const window_ = ref<[number, number] | null>(null)  // UTC ms; null is the whole span
 
-// decoded arrays, rows as named: dyn[channel][time], acc[channel][time], dmt[dm][time]
-let dyn: Float32Array[] = [], acc: Float32Array[] = [], dmt: Float32Array[] = []
+// decoded arrays, rows as named: dyn[channel][time], acc[channel][time]
+let dyn: Float32Array[] = [], acc: Float32Array[] = []
 let zlo = -3, zhi = 4
 
 function unpack(b64: string | undefined, shape: number[] | undefined) {
@@ -72,7 +75,6 @@ function prepare() {
   if (!d) return
   dyn = unpack(d.dynspec, d.dynspec_shape) ?? []
   acc = transpose(unpack(d.accum, d.accum_shape) ?? [])
-  dmt = unpack(d.dmt, d.dmt_shape) ?? []
   if (normOn.value) { dyn = dyn.map(normaliseRow); acc = acc.map(normaliseRow) }
   ;[zlo, zhi] = percentiles(dyn.length ? dyn : acc, 0.01, 0.99)
 }
@@ -244,6 +246,16 @@ function drawMain() {
     traces.push({ x: xs, y: ys, type: 'scatter', mode: 'lines', xaxis: 'x', yaxis: 'y', hoverinfo: 'skip',
       line: { dash: 'dash', width: 1.5, color: dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)' } })
   }
+  const inj = d.injection
+  if (showTrack.value && inj) {
+    const xs: string[] = [], ys: number[] = []
+    for (let i = 0; i <= 200; i++) {
+      const f = b.hi - (b.hi - b.lo) * i / 200
+      xs.push(tz.plotTime((inj.t_inf + K_DM * inj.dm / (f * f)) * 1000)); ys.push(f)
+    }
+    traces.push({ x: xs, y: ys, type: 'scatter', mode: 'lines', xaxis: 'x', yaxis: 'y', hoverinfo: 'skip',
+      line: { dash: 'dot', width: 2, color: dark ? '#fbbf24' : '#b45309' } })
+  }
   const p = profile()
   if (p) traces.push({ ...p, type: 'scatter', mode: 'lines', xaxis: 'x', yaxis: 'y2', hoverinfo: 'skip',
     line: { width: 1.2, color: dark ? '#fbbf24' : '#b45309' } })
@@ -267,24 +279,66 @@ function drawMain() {
   })
 }
 
+// The DM-time plane from the dynamic spectrum, at trial DMs centred on the
+// candidate's (half of it either side, at least 20 steps of one sample of
+// delay), so the burst is in the middle whatever the range of the search tier
+// that found it. Each row is the spectrum summed along the track of its DM,
+// at the arrival at the top of the band, in units of its noise.
+function dmtPlane() {
+  const d = data.value, c = cand.value, b = band.value
+  if (!d?.dynspec_t?.length || !c || !b || !dyn.length) return null
+  const t = d.dynspec_t, dt = t[1] - t[0], n = t.length
+  const f = d.freqs_mhz, fTop = f[f.length - 1]
+  const step = dt / (K_DM * (b.lo ** -2 - b.hi ** -2))
+  const half = Math.max(0.5 * c.dm, 20 * step)
+  const lo = Math.max(0, c.dm - half), hi = c.dm + half
+  const ntr = 121
+  const dms = Array.from({ length: ntr }, (_, i) => lo + (hi - lo) * i / (ntr - 1))
+  const minCh = dyn.length / 2
+  const z = dms.map(dm => {
+    const shift = f.map(fc => Math.round(K_DM * dm * (1 / (fc * fc) - 1 / (fTop * fTop)) / dt))
+    const row = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      let s = 0, m = 0
+      for (let ch = 0; ch < dyn.length; ch++) {
+        const j = i + shift[ch]
+        if (j < n) { const v = dyn[ch][j]; if (v === v) { s += v; m++ } }
+      }
+      row[i] = m >= minCh ? s / Math.sqrt(m) : NaN
+    }
+    return row
+  })
+  return { z, dms, x: t.map(v => tz.plotTime(v * 1000)) }
+}
+
 function drawDmt() {
   const el = dmtDiv.value, d = data.value, c = cand.value
-  if (!el || !d?.dynspec_t || !d.dmt_dm || !dmt.length || !c || !el.clientWidth) return
+  if (!el || !d?.dynspec_t || !c || !el.clientWidth) return
+  const plane = dmtPlane()
+  if (!plane) return
   const dark = colorMode.value == 'dark'
   const ink = dark ? 'white' : 'black'
   const font = (size: number) => ({ family: 'Courier New, monospace', size, color: ink })
-  const [lo, hi] = percentiles(dmt, 0.01, 0.999)
+  const [lo, hi] = percentiles(plane.z, 0.01, 0.999)
+  const xr = [plane.x[0], plane.x[plane.x.length - 1]]
+  // centred on the arrival at the top of the band, where the cross is, with the sweep either side
+  const sw = sweep.value
+  const half = sw ? Math.max(5, 1.5 * (sw[1] - sw[0])) : 0
+  const xView = sw ? [tz.plotTime((sw[0] - half) * 1000), tz.plotTime((sw[0] + half) * 1000)] : xr
+  const inj = data.value?.injection
   Plotly.react(el, [
-    { z: dmt, x: d.dynspec_t.map(t => tz.plotTime(t * 1000)), y: d.dmt_dm, type: 'heatmap', colorscale: 'Viridis', showscale: false, zmin: lo, zmax: hi,
-      hovertemplate: 'DM %{y:.1f}<br>%{z:.1f}<extra></extra>' },
-    { x: [d.dynspec_t[0], d.dynspec_t[d.dynspec_t.length - 1]].map(t => tz.plotTime(t * 1000)), y: [c.dm, c.dm], type: 'scatter', mode: 'lines',
-      hoverinfo: 'skip', line: { dash: 'dot', width: 1, color: dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)' } }
+    { z: plane.z, x: plane.x, y: plane.dms, type: 'heatmap', colorscale: 'Viridis', showscale: false, zmin: lo, zmax: hi,
+      hovertemplate: 'DM %{y:.1f}<br>S/N %{z:.1f}<extra></extra>' },
+    { x: xr, y: [c.dm, c.dm], type: 'scatter', mode: 'lines',
+      hoverinfo: 'skip', line: { dash: 'dash', width: 1, color: dark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)' } },
+    ...(inj ? [{ x: xr, y: [inj.dm, inj.dm], type: 'scatter', mode: 'lines', hoverinfo: 'skip',
+      line: { dash: 'dot', width: 1.5, color: dark ? '#fbbf24' : '#b45309' } }] : [])
   ], {
     height: 520,
     margin: { t: 45, b: 55, l: 70, r: 20 },
     title: { text: 'DM-time plane', font: font(18) },
-    xaxis: { title: { text: `Time (${tz.zoneName(d.dynspec_t[0] * 1000)})`, font: font(16) }, tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, nticks: 4 },
-    yaxis: { title: { text: 'DM (pc cm⁻³)', font: font(16) }, tickfont: { color: ink }, tickcolor: ink },
+    xaxis: { title: { text: `Time (${tz.zoneName(d.dynspec_t[0] * 1000)})`, font: font(16) }, tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, nticks: 4, range: xView },
+    yaxis: { title: { text: 'DM (pc cm⁻³)', font: font(16) }, tickfont: { color: ink }, tickcolor: ink, range: [plane.dms[0], plane.dms[plane.dms.length - 1]] },
     paper_bgcolor: dark ? '#131826' : 'rgb(255,255,255)',
     plot_bgcolor: dark ? '#374151' : '#d1d5db',
     hovermode: 'closest', showlegend: false
@@ -292,6 +346,12 @@ function drawDmt() {
 }
 
 function drawAll() { drawBackground(); drawMain(); drawDmt() }
+
+// the search kept less than the sweep before the burst: the plane is blank there
+const shortBefore = computed(() => {
+  const t = data.value?.dynspec_t, sw = sweep.value
+  return !!t?.length && !!sw && t[0] > sw[0] - Math.max(5, 1.5 * (sw[1] - sw[0]))
+})
 
 const clsTitle = computed(() => ({ candidate: 'Candidate', injection: 'Test injection', rfi: 'RFI', known: 'Known source' } as Record<string, string>)[cand.value?.cls ?? ''] ?? 'Candidate')
 const clsColor: Record<string, string> = { candidate: 'amber', injection: 'sky', rfi: 'gray', known: 'violet' }
@@ -339,6 +399,9 @@ onBeforeUnmount(() => {
             arrival {{ tz.dateTime(cand.t_inf * 1000) }} {{ tz.zoneName(cand.t_inf * 1000) }} at infinite frequency<template v-if="sweep">,
             {{ tz.clock(sweep[0] * 1000) }} to {{ tz.clock(sweep[1] * 1000) }} across this band</template>
           </span>
+          <span v-if="data?.injection" class="text-amber-600 dark:text-amber-400">
+            injected at DM {{ data.injection.dm.toFixed(1) }} with S/N {{ data.injection.snr_target.toFixed(0) }}
+          </span>
           <span v-if="cand.known_source" class="text-gray-500 dark:text-gray-400">{{ cand.known_source.name }}</span>
           <span v-if="cand.cls == 'rfi' && cand.rfi_reasons?.length" class="text-gray-500 dark:text-gray-400">{{ cand.rfi_reasons.join(', ') }}</span>
         </template>
@@ -378,12 +441,21 @@ onBeforeUnmount(() => {
           <div :id="mainId" ref="mainDiv" />
           <p class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
             The pulse above is the spectrum summed along the burst's track, at the arrival at the top of the band.
+            The dashed curve is the track at the DM found<template v-if="data?.injection">, the amber dotted one at the DM injected</template>.
             The 10 s averages are drawn where the search resolution was not kept.
           </p>
         </UCard>
         <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1' } }">
           <div :id="dmtId" ref="dmtDiv" />
-          <p class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">The dotted line marks the candidate's DM.</p>
+          <p class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
+            Computed from the dynamic spectrum around the DM found, which the dashed line marks<template v-if="data?.injection">; the amber dotted line marks the DM injected</template>.
+            A burst shows as a cross centred on its DM and arrival.
+            <template v-if="shortBefore"> The search keeps one window of data at this resolution, and for a DM near the top of its search range that window begins about when the burst arrives, so the plane is blank before it.</template>
+          </p>
+          <p v-if="cand?.dm_arms?.length" class="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
+            The same burst also passed the threshold at other trial DMs, smeared, and these detections were merged into this one:
+            {{ cand.dm_arms.map(a => `DM ${a.dm.toFixed(1)} at S/N ${a.snr.toFixed(1)}`).join(', ') }}.
+          </p>
         </UCard>
       </div>
     </div>
