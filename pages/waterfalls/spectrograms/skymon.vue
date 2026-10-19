@@ -298,6 +298,10 @@ function onKey(e: KeyboardEvent) {
 }
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+// how many of the FRB list's optional groups are included (the count on its menu)
+const frbIncludeCount = computed(() => frbView.value == 'candidates'
+  ? [showInjections.value, showRfi.value, showKnown.value].filter(Boolean).length
+  : [showInjEvents.value, showUnconfirmable.value, showReviewed.value, showTerrestrial.value].filter(Boolean).length)
 const isOpen = (c: Cand) => openCand.value?.node == c.node && openCand.value?.id == c.id
 // an event's bands, lowest frequency first: what each found or measured, and its data if kept
 function eventBands(e: Ev) {
@@ -415,18 +419,27 @@ useSeoMeta({
             <template #frbs>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 py-2 text-sm">
                 <USelect v-model="frbView" size="xs" :options="[{ value: 'events', label: 'FRBs (events)' }, { value: 'candidates', label: 'All candidates' }]" />
-                <template v-if="frbView == 'candidates'">
-                  <UCheckbox v-model="showInjections" label="Test injections" />
-                  <UCheckbox v-model="showRfi" label="RFI" />
-                  <UCheckbox v-model="showKnown" label="Known sources" />
-                </template>
-                <template v-else>
-                  <UCheckbox v-model="showInjEvents" label="Test injections" />
-                  <UCheckbox v-model="showUnconfirmable" label="Not checkable" />
-                  <UCheckbox v-model="showReviewed" label="Reviewed" />
-                  <UCheckbox v-model="showTerrestrial" label="Terrestrial" />
-                  <UBadge v-if="combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
-                </template>
+                <!-- what the list includes, as a checklist in a menu -->
+                <UPopover>
+                  <UButton size="xs" color="gray" variant="outline" trailing-icon="i-heroicons-chevron-down-20-solid"
+                    :label="`Include (${frbIncludeCount})`" />
+                  <template #panel>
+                    <div class="p-3 space-y-2 text-sm">
+                      <template v-if="frbView == 'candidates'">
+                        <UCheckbox v-model="showInjections" label="Test injections" />
+                        <UCheckbox v-model="showRfi" label="RFI" />
+                        <UCheckbox v-model="showKnown" label="Known sources" />
+                      </template>
+                      <template v-else>
+                        <UCheckbox v-model="showInjEvents" label="Test injections" />
+                        <UCheckbox v-model="showUnconfirmable" label="Single band only" />
+                        <UCheckbox v-model="showReviewed" label="Already reviewed" />
+                        <UCheckbox v-model="showTerrestrial" label="Terrestrial" />
+                      </template>
+                    </div>
+                  </template>
+                </UPopover>
+                <UBadge v-if="frbView == 'events' && combinerUp === false" color="red" variant="subtle" size="xs" label="Combiner not answering" />
                 <div class="flex-1" />
                 <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="frbView == 'events' ? eventsPending : candsPending"
                   aria-label="Reload" @click="frbView == 'events' ? loadEvents() : loadCands()" />
