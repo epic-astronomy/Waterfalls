@@ -70,17 +70,16 @@ function draw() {
   }
   Plotly.react(div, traces, {
     height: 260,
-    margin: { t: 8, b: 40, l: 52, r: 74 },
+    margin: { t: 6, b: 40, l: 52, r: 74 },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     xaxis: { title: { text: `Arrival (${tz.zoneName()})`, font: { size: 11, color: ink } },
       tickfont: { size: 10, color: ink }, gridcolor: grid, zeroline: false, tickformat: '%H:%M', nticks: 6,
       range: [tz.plotTime((t0 - pad) * 1000), tz.plotTime((t1 + pad) * 1000)] },
     yaxis: { type: 'log', title: { text: 'DM (pc cm⁻³)', font: { size: 11, color: ink } }, tickfont: { size: 10, color: ink },
       gridcolor: grid, zeroline: false, dtick: 1, range: [0, Math.log10(6000)] },
-    legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: { size: 10, color: ink } },
-    showlegend: traces.length > 1, hovermode: 'closest', dragmode: 'zoom',
+    showlegend: false, hovermode: 'closest', dragmode: 'zoom',
     shapes, annotations, images
-  }, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d', 'autoScale2d', 'toImage'] })
+  }, { displaylogo: false, responsive: true, displayModeBar: false })
     .then(bind)
 }
 
