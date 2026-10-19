@@ -14,6 +14,8 @@ export interface Marker { ra: number, dec: number, color: string, title: string 
 
 const props = defineProps<{
   node: string | null,
+  // the list of monitors is still loading
+  waiting?: boolean,
   selected?: number | null,
   markers?: Marker[],
   seconds?: number
@@ -344,7 +346,7 @@ onMounted(() => {
   timer = setInterval(load, 60000)
 })
 onBeforeUnmount(() => { ro?.disconnect(); clearInterval(timer); cancelAnimationFrame(raf) })
-watch(() => props.node, () => { load() })
+watch(() => props.node, () => { map.value = null; raw = new Float32Array(0); values = raw; tracked = new Int32Array(0); draw(); load() })
 watch([() => props.selected, () => props.markers, stretch, showGrid, showLabels, colorMode], draw)
 watch(flatten, () => { prepare(); draw() })
 
@@ -381,8 +383,21 @@ const spanText = computed(() => {
         <div>Elevation {{ hover.el.toFixed(1) }}°, azimuth {{ hover.az.toFixed(1) }}°</div>
         <div>HEALPix {{ hover.hpix }}<template v-if="hover.value === hover.value">, {{ hover.value.toPrecision(4) }}</template><template v-else>, not tracked</template></div>
       </div>
-      <div v-if="!node || (!map && !pending)" class="absolute inset-0 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 pointer-events-none">
-        {{ !node ? 'Select a monitor.' : error || 'No sky map.' }}
+      <div v-if="!node && waiting" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <SpectrogramSkymonLoading class="rounded bg-white/85 dark:bg-gray-900/85 px-6" :messages="[
+          'Asking the six monitors for their state',
+          'Waiting for the monitors to answer',
+          'Choosing a monitor to show']" />
+      </div>
+      <div v-else-if="!map && pending" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <SpectrogramSkymonLoading :key="node ?? ''" class="rounded bg-white/85 dark:bg-gray-900/85 px-6" :messages="[
+          `Asking ${node} for its sky`,
+          'Averaging the last 5 min of every tracked pixel',
+          'Receiving the HEALPix map',
+          'Projecting the sky onto the view']" />
+      </div>
+      <div v-else-if="!node || (!map && !pending)" class="absolute inset-0 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 pointer-events-none">
+        {{ !node ? 'No monitor is answering.' : error || 'No sky map.' }}
       </div>
     </div>
     <p class="text-xs text-gray-500 dark:text-gray-400">

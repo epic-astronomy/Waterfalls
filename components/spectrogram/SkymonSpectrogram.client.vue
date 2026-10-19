@@ -199,7 +199,7 @@ function schedule() {
   if (autoOn.value) timer = setInterval(() => { if (!pending.value && !document.hidden) load() }, resolution.value == 'live' ? 5000 : 30000)
 }
 watch(() => [props.node, props.ra, props.dec, props.hpix], () => { band.value = null; rows = []; draw(); load() })
-watch([resolution, hours], () => { load(); schedule() })
+watch([resolution, hours], () => { band.value = null; rows = []; draw(); load(); schedule() })
 watch(autoOn, schedule)
 watch([normOn, colorMode, () => tz.mode.value, showDispersion, () => props.tInf, () => props.dm], () => draw())
 watch(rfiOn, on => { if (on && !rfiMask.value) requestRfi(); else draw() })
@@ -243,7 +243,16 @@ const hoursOptions = [{ label: 'last 30 min', value: 0.5 }, { label: 'last 1 h',
       </div>
     </UCard>
     <UCard :ui="{ body: { padding: 'px-1 py-1 sm:p-1 m-1' } }" class="relative">
-      <UProgress v-if="pending && !hasData" animation="elastic" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
+      <SpectrogramSkymonLoading v-if="pending && !hasData" :key="`${node}-${hpix ?? ra}-${dec}-${resolution}`" :messages="resolution == 'live' ? [
+        `Asking ${node} for this pixel`,
+        'Reading the latest search window',
+        'Receiving the spectrogram',
+        'Drawing the spectrogram'] : [
+        `Asking ${node} for this pixel`,
+        `Reading the 10 s averages of the last ${hours < 1 ? hours * 60 + ' min' : hours + ' h'}`,
+        'Receiving the spectrogram',
+        'Drawing the spectrogram']" />
+      <UProgress v-else-if="pending" animation="carousel" size="xs" class="p-0 m-0 top-0 left-0 absolute" />
       <UAlert v-if="error" color="red" variant="soft" icon="i-heroicons-exclamation-triangle" :title="error" class="mb-1" />
       <p v-if="!pending && band && band.up && !hasData" class="p-4 text-sm text-gray-500 dark:text-gray-400">
         {{ band.tracked ? 'No data for this pixel in the selected span yet.' : 'This monitor does not track this position. A position is tracked while it is above the elevation limit.' }}

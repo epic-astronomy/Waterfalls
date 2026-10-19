@@ -32,11 +32,12 @@ interface Cand {
 
 const nodes = ref<Node[]>([])
 const nodesPending = ref(false)
+const nodesLoaded = ref(false)
 async function loadNodes() {
   nodesPending.value = true
   try { nodes.value = await $fetch<Node[]>(rtConfig.public.fastapiBase + '/skymon/nodes') }
   catch { nodes.value = [] }
-  finally { nodesPending.value = false }
+  finally { nodesPending.value = false; nodesLoaded.value = true }
 }
 
 // events of the combiner: candidates checked in every band that could see them
@@ -62,7 +63,7 @@ interface Ev {
 }
 const events = ref<Ev[]>([])
 const combinerUp = ref<boolean | null>(null)
-const eventsPending = ref(false)
+const eventsPending = ref(true)
 const showInjEvents = ref(false)
 const showUnconfirmable = ref(false)
 const showTerrestrial = ref(false)
@@ -139,7 +140,7 @@ const showInjections = ref(route.query.inj == '1')
 const showRfi = ref(false)
 const showKnown = ref(false)
 const cands = ref<Cand[]>([])
-const candsPending = ref(false)
+const candsPending = ref(true)
 async function loadCands() {
   candsPending.value = true
   try { cands.value = await $fetch<Cand[]>(rtConfig.public.fastapiBase + '/skymon/candidates', { query: { since_h: sinceH.value } }) }
@@ -272,7 +273,7 @@ useSeoMeta({
             </span>
           </div>
         </template>
-        <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :selected="selectedHpix" :markers="markers"
+        <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :waiting="!nodesLoaded" :selected="selectedHpix" :markers="markers"
           @select="onPick" @nside="n => mapNside = n" />
       </UCard>
 
@@ -285,7 +286,11 @@ useSeoMeta({
             <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="nodesPending" @click="loadNodes" />
           </div>
         </template>
-        <div class="overflow-x-auto">
+        <SpectrogramSkymonLoading v-if="!nodesLoaded" :messages="[
+          'Asking the six monitors for their state',
+          'Collecting bands, tracked pixels and candidates',
+          'Waiting for the slower monitors to answer']" />
+        <div v-else class="overflow-x-auto">
           <table class="min-w-full text-sm">
             <thead class="text-left text-gray-500 dark:text-gray-400">
               <tr>
@@ -452,6 +457,8 @@ useSeoMeta({
                 </td>
               </tr>
             </template>
+            <tr v-if="!shownEvents.length && eventsPending"><td colspan="8">
+              <SpectrogramSkymonLoading compact :messages="['Asking the combiner for the events', 'Collecting the bands of each event']" /></td></tr>
             <tr v-if="!shownEvents.length && !eventsPending"><td colspan="8" class="px-2 py-3 text-center text-gray-500">No events in this period.</td></tr>
           </tbody>
         </table>
@@ -501,6 +508,8 @@ useSeoMeta({
               </td>
               <td class="px-2 py-1"><UButton size="2xs" variant="outline" label="Spectrogram" @click="showCandidate(c)" /></td>
             </tr>
+            <tr v-if="!shownCands.length && candsPending"><td colspan="11">
+              <SpectrogramSkymonLoading compact :messages="['Asking every monitor for its candidates', 'Merging the candidates of all bands']" /></td></tr>
             <tr v-if="!shownCands.length && !candsPending"><td colspan="11" class="px-2 py-3 text-center text-gray-500">No candidates in this period.</td></tr>
           </tbody>
         </table>
