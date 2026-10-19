@@ -11,7 +11,7 @@ const router = useRouter()
 // the lists, in tabs beside the viewer
 const tabs = [{ label: 'FRBs', slot: 'frbs' }, { label: 'Pulsars', slot: 'pulsars' }]
 const tab = ref(route.query.tab == 'pulsars' ? 1 : 0)
-const frbView = ref<'candidates' | 'events'>(route.query.view == 'events' ? 'events' : 'candidates')
+const frbView = ref<'candidates' | 'events'>(route.query.view == 'candidates' ? 'candidates' : 'events')
 
 interface Node {
   node: string, up: boolean, error?: string,
@@ -70,7 +70,7 @@ const events = ref<Ev[]>([])
 const combinerUp = ref<boolean | null>(null)
 const eventsPending = ref(true)
 const showInjEvents = ref(false)
-const showUnconfirmable = ref(false)
+const showUnconfirmable = ref(true)
 const showTerrestrial = ref(false)
 async function loadEvents() {
   eventsPending.value = true
@@ -119,19 +119,10 @@ const bandLabel: Record<string, string> = {
   detected: 'detected', followup: 'measured', watching: 'watching', not_visible: 'not visible',
   node_down: 'not answering', searched: 'searched'
 }
-function bandText(name: string, b: BandState) {
-  const v = b.candidate?.snr ?? b.followup?.snr
-  const f = b.candidate?.fluence_jy_ms ?? b.followup?.fluence_jy_ms
-  return `${bandName(name) || 'band'} ${bandLabel[b.state ?? ''] ?? b.state ?? ''}${v != null ? ' ' + v.toFixed(1) : ''}` +
-    (f != null ? `, ${fluenceText(f)}` : '')
-}
 function solarText(r: Solar) {
   const t = (iso?: string | null) => iso ? tz.dateTime(Date.parse(iso)) : ''
   const kind = r.type == 'XRA' ? `X-ray flare${r.cls ? ' ' + r.cls : ''}` : `radio burst${r.cls ? ' type ' + r.cls : ''}`
   return `${kind}, ${t(r.begin)}${r.end ? ' to ' + t(r.end) : ''}`
-}
-function fluenceText(f: number) {
-  return f >= 1000 ? `${(f / 1000).toFixed(1)} Jy s` : `${f.toPrecision(3)} Jy ms`
 }
 function showEvent(e: Ev) {
   if (e.ra == null || e.dec == null || e.dm == null) return
@@ -225,7 +216,7 @@ watch([node, ra, dec, sinceH, showInjections, openCand, () => tab.value, () => f
   if (node.value) q.node = node.value
   if (openCand.value) q.cand = `${openCand.value.node}:${openCand.value.id}`
   if (tab.value == 1) q.tab = 'pulsars'
-  if (frbView.value == 'events') q.view = 'events'
+  if (frbView.value == 'candidates') q.view = 'candidates'
   if (ra.value != null && dec.value != null) { q.ra = ra.value.toFixed(4); q.dec = dec.value.toFixed(4) }
   if (sinceH.value != 24) q.since_h = String(sinceH.value)
   if (showInjections.value) q.inj = '1'
@@ -308,6 +299,20 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 const isOpen = (c: Cand) => openCand.value?.node == c.node && openCand.value?.id == c.id
+// an event's bands, lowest frequency first: what each found or measured, and its data if kept
+function eventBands(e: Ev) {
+  return Object.entries(e.bands ?? {}).map(([n, b]) => {
+    const m = b.candidate ?? b.followup
+    const id = b.candidate?.id ?? b.data_id
+    const nd = nodes.value.find(x => x.node == n)
+    return { node: n, state: b.state ?? '', snr: m?.snr ?? null, dm: m?.dm ?? null, id: id ?? null,
+      f: nd?.band ? (nd.band.f_lo + nd.band.f_hi) / 2 : b.f_lo ?? 1e9 }
+  }).sort((a, b) => a.f - b.f)
+}
+function openBand(e: Ev, b: { node: string, id: string | null }) {
+  if (!b.id || e.ra == null || e.dec == null || e.dm == null) return
+  showCandidate({ node: b.node, id: b.id, ra: e.ra, dec: e.dec, t_inf: e.t_inf, dm: e.dm } as Cand)
+}
 function openEvent(e: Ev) {
   expanded.value = expanded.value == e.id ? null : e.id
   if (expanded.value) showEvent(e)
@@ -409,7 +414,7 @@ useSeoMeta({
           <UTabs v-model="tab" :items="tabs" :ui="{ list: { width: 'w-full' } }">
             <template #frbs>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 py-2 text-sm">
-                <USelect v-model="frbView" size="xs" :options="[{ value: 'candidates', label: 'Candidates' }, { value: 'events', label: 'Events across bands' }]" />
+                <USelect v-model="frbView" size="xs" :options="[{ value: 'events', label: 'FRBs (events)' }, { value: 'candidates', label: 'All candidates' }]" />
                 <template v-if="frbView == 'candidates'">
                   <UCheckbox v-model="showInjections" label="Test injections" />
                   <UCheckbox v-model="showRfi" label="RFI" />
@@ -426,9 +431,10 @@ useSeoMeta({
                 <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="frbView == 'events' ? eventsPending : candsPending"
                   aria-label="Reload" @click="frbView == 'events' ? loadEvents() : loadCands()" />
               </div>
+              <!-- every candidate of the period, whichever list is shown below -->
+                <SpectrogramSkymonDmTime :cands="shownCands" :pulsars="dmtPulsars" :open="openCand" :bands="bandNames" @select="showCandidate" />
               <!-- candidates of all monitors -->
               <template v-if="frbView == 'candidates'">
-                <SpectrogramSkymonDmTime :cands="shownCands" :pulsars="dmtPulsars" :open="openCand" :bands="bandNames" @select="showCandidate" />
                 <div class="overflow-auto max-h-[32rem]">
                   <table class="min-w-full text-sm">
                     <thead class="text-left text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-900 z-10">
@@ -475,8 +481,11 @@ useSeoMeta({
                         <tr class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
                           :class="expanded == e.id ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
                           @click="openEvent(e)">
-                          <td class="px-2 py-1 font-mono whitespace-nowrap">{{ tz.dateTime(e.t_inf * 1000) }}</td>
-                          <td class="px-2 py-1">
+                          <td class="px-2 py-1 font-mono whitespace-nowrap">
+                            <UIcon :name="expanded == e.id ? 'i-heroicons-chevron-down-20-solid' : 'i-heroicons-chevron-right-20-solid'" class="w-4 h-4 align-middle text-gray-400" />
+                            {{ tz.dateTime(e.t_inf * 1000) }}
+                          </td>
+                          <td class="px-2 py-1 whitespace-nowrap">
                             <UBadge :color="evColor[e.status]" variant="subtle" size="xs" :label="evLabel[e.status] ?? e.status" />
                             <UBadge v-if="e.kind == 'injection'" color="sky" variant="outline" size="xs" label="Test injection" class="ml-1" />
                             <UBadge v-if="reviewLabel[e.review ?? '']" :color="e.review == 'pending' ? 'orange' : 'gray'" variant="outline" size="xs"
@@ -488,14 +497,23 @@ useSeoMeta({
                           <td class="px-2 py-1 text-right tabular-nums">{{ e.combined_snr != null ? e.combined_snr.toFixed(1) : '' }}</td>
                           <td class="px-2 py-1 whitespace-nowrap">{{ e.kind == 'terrestrial' ? `${e.candidates?.length ?? 0} candidates` : e.seen?.length ? `${e.seen.length} of ${e.could_see?.length ?? 0}` : '' }}</td>
                         </tr>
+                        <template v-if="expanded == e.id">
+                          <tr v-for="b in eventBands(e)" :key="b.node" class="text-xs"
+                            :class="[b.id ? 'cursor-pointer' : '', isOpen({ node: b.node, id: b.id ?? '' } as Cand) ? 'bg-primary-50 dark:bg-primary-950/40' : 'bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                            @click="openBand(e, b)">
+                            <td class="pl-8 pr-2 py-1 whitespace-nowrap">{{ bandName(b.node) }}</td>
+                            <td class="px-2 py-1">
+                              <UBadge size="xs" variant="soft" :label="bandLabel[b.state] ?? b.state"
+                                :color="b.state == 'detected' || (b.state == 'followup' && (b.snr ?? 0) >= 6) ? 'green' : b.state == 'watching' ? 'sky' : 'gray'" />
+                            </td>
+                            <td class="px-2 py-1 text-right tabular-nums">{{ b.dm != null ? b.dm.toFixed(1) : '' }}</td>
+                            <td class="px-2 py-1 text-right tabular-nums">{{ b.snr != null ? b.snr.toFixed(1) : '' }}</td>
+                            <td class="px-2 py-1 text-gray-500 dark:text-gray-400">{{ b.id ? 'open' : '' }}</td>
+                          </tr>
+                        </template>
                         <tr v-if="expanded == e.id" class="bg-gray-50 dark:bg-gray-800/50">
                           <td colspan="5" class="px-3 py-2 space-y-2">
                             <div class="text-xs text-gray-600 dark:text-gray-300">RA {{ fmt(e.ra, 2) }}°, Dec {{ fmt(e.dec, 2) }}°</div>
-                            <div class="flex flex-wrap gap-2">
-                              <UBadge v-for="(b, name) in e.bands" :key="name" size="xs" variant="soft"
-                                :color="b.state == 'detected' || (b.state == 'followup' && (b.followup?.snr ?? 0) >= 6) ? 'green' : b.state == 'watching' ? 'sky' : 'gray'"
-                                :label="bandText(String(name), b) + (b.state == 'detected' || b.data_id ? ', data kept' : '')" />
-                            </div>
                             <p v-if="e.spectrum?.consistent_with?.length" class="text-xs text-gray-600 dark:text-gray-300">
                               The S/N measured in the bands is consistent with {{ e.spectrum.consistent_with.join(', or with ') }}.
                             </p>

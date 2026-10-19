@@ -43,7 +43,7 @@ function draw() {
     const pts = props.cands.filter(c => c.cls == cls && c.dm > 0)
     if (!pts.length) continue
     traces.push({
-      type: 'scattergl', mode: 'markers', name: NAMES[cls],
+      type: 'scatter', mode: 'markers', name: NAMES[cls],
       x: pts.map(c => tz.plotTime(c.t_inf * 1000)), y: pts.map(c => c.dm), customdata: pts.map(c => `${c.node}|${c.id}`),
       text: pts.map(c => `${props.bands?.[c.node] ?? ''} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)}${c.known_source ? ', ' + c.known_source.name : ''}`),
       hovertemplate: '%{text}<br>%{x}<extra></extra>',
