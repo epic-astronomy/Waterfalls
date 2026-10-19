@@ -61,6 +61,23 @@ def _ask_all(path: str, timeout: float):
     return out
 
 
+def _conditions(c):
+    if not isinstance(c, dict):
+        return None
+    lat, summ = c.get("latest"), c.get("summary")
+    return dict(
+        latest=None if not isinstance(lat, dict) else
+        {k: lat.get(k) for k in ("disturbed", "reasons", "noise_ratio", "rfi_rate", "cand_rate")},
+        summary=None if not isinstance(summ, dict) else dict(disturbed_since=summ.get("disturbed_since")))
+
+
+def _rfi(r):
+    if not isinstance(r, dict):
+        return None
+    return dict(flagged_fraction_last_minute=r.get("flagged_fraction_last_minute"),
+                masked_mhz=r.get("masked_mhz") or [])
+
+
 @router.get("/nodes")
 def nodes():
     """State of every monitor: band, tracked pixels, real-time margin, candidates, injections"""
@@ -79,7 +96,9 @@ def nodes():
             tiers=r.get("tiers"), candidates=r.get("candidates"),
             injections=dict(injected=inj.get("injected"), recovered=inj.get("recovered"),
                             missed=inj.get("missed"), active=inj.get("active")),
-            last_image_unix=r.get("last_image_unix"), started=r.get("started")))
+            last_image_unix=r.get("last_image_unix"), started=r.get("started"),
+            pix_deg=r.get("pix_deg"), el_min=r.get("el_min"),
+            conditions=_conditions(r.get("conditions")), rfi_flagging=_rfi(r.get("rfi_flagging"))))
     out.sort(key=lambda d: (d.get("band") or {}).get("f_lo") or 1e9)
     return out
 
@@ -119,15 +138,43 @@ def candidate(node: str, cid: str):
     return c
 
 
+_skymaps: dict[tuple[str, int], tuple[float, dict]] = {}
+
+
+@router.get("/{node}/skymap")
+def skymap(node: str, seconds: int = Query(300, ge=10, le=3600)):
+    """
+    The sky one monitor sees, averaged over the last `seconds` of its
+    accumulation, on its HEALPix grid: hpix (base64 int32) and values (base64
+    float32, raw image units). Cached for 30 s, since every viewer asks the same.
+    """
+    url = _node_url(node)
+    key = (node, seconds)
+    hit = _skymaps.get(key)
+    if hit and time.time() - hit[0] < 30:
+        return hit[1]
+    try:
+        r = _get(f"{url}/api/skymap?seconds={seconds}", settings.SKYMON_PIXEL_TIMEOUT_S)
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=503 if e.code == 503 else 502, detail="no sky map from this monitor")
+    except Exception:
+        raise HTTPException(status_code=503, detail="monitor unavailable")
+    r["node"] = node
+    _skymaps[key] = (time.time(), r)
+    return r
+
+
 def _pixel(url: str, params: dict):
     body = _get(f"{url}/api/pixel?{urllib.parse.urlencode(params)}&format=npz",
                 settings.SKYMON_PIXEL_TIMEOUT_S, raw=True)
-    meta = _get(f"{url}/api/pixel?{urllib.parse.urlencode(dict(params, since=time.time() + 1e9))}",
-                settings.SKYMON_TIMEOUT_S)
     with np.load(io.BytesIO(body)) as z:
         times = z["times"]
         data = z["data"].astype(np.float32)
         freqs = z["freqs_mhz"]
+        meta = json.loads(str(z["meta"])) if "meta" in z.files else None
+    if meta is None:  # a monitor without the metadata in its npz
+        meta = _get(f"{url}/api/pixel?{urllib.parse.urlencode(dict(params, since=time.time() + 1e9))}",
+                    settings.SKYMON_TIMEOUT_S)
     return dict(hpix=meta.get("hpix"), nside=meta.get("nside"), ra=meta.get("ra"),
                 dec=meta.get("dec"), tracked=meta.get("tracked"), el=meta.get("el"),
                 kind=meta.get("kind"), interval_s=meta.get("interval_s"),
@@ -139,7 +186,7 @@ def _pixel(url: str, params: dict):
 @router.get("/pixel")
 def pixel(ra: float = Query(..., ge=0, lt=360), dec: float = Query(..., ge=-90, le=90),
           hours: float = Query(2.0, gt=0, le=24), node: str | None = None,
-          fine: bool = False):
+          fine: bool = False, hpix: int | None = Query(None, ge=0)):
     """
     Spectrogram of the sky position (ra, dec) from every monitor tracking it,
     one entry per band: times (unix), freqs_mhz, and data [time][channel] as
@@ -147,6 +194,8 @@ def pixel(ra: float = Query(..., ge=0, lt=360), dec: float = Query(..., ge=-90, 
     """
     nodes = {node: _node_url(node)} if node else _nodes()
     params = dict(ra=ra, dec=dec, since=time.time() - hours * 3600)
+    if hpix is not None and node:  # a pixel picked on that monitor's own grid
+        params = dict(hpix=hpix, since=params["since"])
     if fine:
         params["fine"] = 1
     futs = {n: _pool.submit(_pixel, u, params) for n, u in nodes.items()}

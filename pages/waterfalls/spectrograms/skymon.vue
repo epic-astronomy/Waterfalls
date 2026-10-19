@@ -2,6 +2,7 @@
 // All-sky monitor: every imaging worker searches its own band of the whole
 // visible sky for dispersed bursts. This page shows the state of each
 // monitor, the candidates they found, and the spectrogram of any position.
+import { radec2pix } from '~/lib/healpix'
 const rtConfig = useRuntimeConfig()
 const tz = useTimeZone()
 const route = useRoute()
@@ -13,6 +14,7 @@ interface Node {
   tracked?: number, nside?: number, beam_deg?: number, lag_s?: number | null,
   cpu_fraction?: number | null, images?: number, missing_images?: number,
   candidates?: { stored: number, rfi: number, injection: number, duplicates: number },
+  threshold?: number, pix_deg?: number, last_image_unix?: number | null,
   injections?: { injected: number, recovered: number, missed: number, active: number },
   tiers?: { dm_max: number }[],
   conditions?: { latest?: { disturbed: boolean, reasons: string[], noise_ratio: number | null } | null,
@@ -127,7 +129,8 @@ function fluenceText(f: number) {
 }
 function showEvent(e: Ev) {
   if (e.ra == null || e.dec == null || e.dm == null) return
-  showCandidate({ ra: e.ra, dec: e.dec, t_inf: e.t_inf, dm: e.dm } as Cand)
+  const n = Object.keys(e.bands ?? {}).find(b => e.bands[b].state == 'detected') ?? node.value
+  showCandidate({ node: n, ra: e.ra, dec: e.dec, t_inf: e.t_inf, dm: e.dm } as Cand)
 }
 const expanded = ref<string | null>(null)
 
@@ -148,13 +151,25 @@ const shownCands = computed(() => cands.value.filter(c =>
 
 const sinceOptions = [{ label: '6 hours', value: 6 }, { label: '24 hours', value: 24 }, { label: '3 days', value: 72 }, { label: '7 days', value: 168 }]
 
-// spectrogram of a position, from the address so it can be shared
+// the monitor whose sky and spectrograms are shown, and the pixel picked on its
+// sky, both in the address so a view can be shared
+const node = ref<string | null>(typeof route.query.node == 'string' ? route.query.node : null)
+const selNode = computed(() => nodes.value.find(n => n.node == node.value) ?? null)
+watch(nodes, ns => {
+  if (!node.value || !ns.some(n => n.node == node.value)) node.value = ns.find(n => n.up && n.band)?.node ?? ns[0]?.node ?? null
+})
 const ra = ref(route.query.ra != null ? Number(route.query.ra) : null as number | null)
 const dec = ref(route.query.dec != null ? Number(route.query.dec) : null as number | null)
-const hours = ref(Number(route.query.hours) || 2)
-const raInput = ref(ra.value != null ? String(ra.value) : '')
-const decInput = ref(dec.value != null ? String(dec.value) : '')
+const pickedHpix = ref<number | null>(null)
+const mapNside = ref<number | null>(null)
+const selectedHpix = computed(() => {
+  if (pickedHpix.value != null) return pickedHpix.value
+  return ra.value != null && dec.value != null && mapNside.value ? radec2pix(mapNside.value, ra.value, dec.value) : null
+})
+const raInput = ref(ra.value != null ? ra.value.toFixed(3) : '')
+const decInput = ref(dec.value != null ? dec.value.toFixed(3) : '')
 const mark = ref<{ tInf: number, dm: number } | null>(null)
+const skyMap = ref<{ centreOn: (ra: number, dec: number) => void } | null>(null)
 const positionError = computed(() => {
   if (raInput.value === '' && decInput.value === '') return ''
   const r = Number(raInput.value), d = Number(decInput.value)
@@ -162,28 +177,48 @@ const positionError = computed(() => {
   if (!(d >= -90 && d <= 90)) return 'Declination is in degrees, from −90 to 90.'
   return ''
 })
+function setPosition(r: number, d: number, hpix: number | null = null) {
+  ra.value = r
+  dec.value = d
+  pickedHpix.value = hpix
+  raInput.value = r.toFixed(3)
+  decInput.value = d.toFixed(3)
+}
 function showPosition() {
   if (positionError.value || raInput.value === '' || decInput.value === '') return
-  ra.value = Number(raInput.value)
-  dec.value = Number(decInput.value)
+  setPosition(Number(raInput.value), Number(decInput.value))
+  mark.value = null
+  skyMap.value?.centreOn(ra.value!, dec.value!)
+}
+function onPick(p: { hpix: number, nside: number, ra: number, dec: number }) {
+  setPosition(p.ra, p.dec, p.hpix)
   mark.value = null
 }
-function showCandidate(c: Cand) {
-  raInput.value = c.ra.toFixed(3)
-  decInput.value = c.dec.toFixed(3)
-  ra.value = c.ra
-  dec.value = c.dec
-  mark.value = { tInf: c.t_inf, dm: c.dm }
-  const age_h = (Date.now() / 1000 - c.t_inf) / 3600
-  hours.value = Math.min(6, Math.max(1, Math.ceil(age_h + 0.5)))
+function selectNode(n: string) {
+  if (n == node.value) return
+  node.value = n
+  pickedHpix.value = null  // the pixel of this position on the new monitor's grid
 }
-watch([ra, dec, hours, sinceH, showInjections], () => {
+function showCandidate(c: Cand) {
+  if (c.node) selectNode(c.node)
+  setPosition(c.ra, c.dec)
+  mark.value = { tInf: c.t_inf, dm: c.dm }
+  skyMap.value?.centreOn(c.ra, c.dec)
+}
+watch([node, ra, dec, sinceH, showInjections], () => {
   const q: Record<string, string> = {}
-  if (ra.value != null && dec.value != null) { q.ra = String(ra.value); q.dec = String(dec.value); q.hours = String(hours.value) }
+  if (node.value) q.node = node.value
+  if (ra.value != null && dec.value != null) { q.ra = ra.value.toFixed(4); q.dec = dec.value.toFixed(4) }
   if (sinceH.value != 24) q.since_h = String(sinceH.value)
   if (showInjections.value) q.inj = '1'
   router.replace({ query: q })
 })
+// candidates of the shown monitor, marked on its sky
+const markers = computed(() => cands.value
+  .filter(c => c.node == node.value && (c.cls == 'candidate' || (showInjections.value && c.cls == 'injection')))
+  .map(c => ({ ra: c.ra, dec: c.dec, color: c.cls == 'injection' ? '#38bdf8' : '#f59e0b', title: `S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)}` })))
+const candCount = (n: Node) => n.candidates ? n.candidates.stored - n.candidates.rfi - n.candidates.injection : null
+const dmReach = (n: Node) => n.tiers?.length ? Math.round(n.tiers[n.tiers.length - 1].dm_max) : null
 watch(sinceH, () => { loadCands(); loadEvents() })
 
 const pct = (x?: number | null) => x == null ? '' : `${Math.round(100 * x)}%`
@@ -227,55 +262,101 @@ useSeoMeta({
     <template #right><TimeZoneToggle /></template>
   </PageToolbar>
   <UDashboardPanelContent class="space-y-4">
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <span class="font-medium">Sky</span>
+            <span v-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">
+              seen by {{ selNode.node }}<template v-if="selNode.band"> at {{ selNode.band.f_lo.toFixed(2) }}–{{ selNode.band.f_hi.toFixed(2) }} MHz</template>, last 5 min
+            </span>
+          </div>
+        </template>
+        <SpectrogramSkymonSkyMap ref="skyMap" :node="node" :selected="selectedHpix" :markers="markers"
+          @select="onPick" @nside="n => mapNside = n" />
+      </UCard>
+
+      <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <span class="font-medium">Monitors</span>
+            <span class="text-sm text-gray-500 dark:text-gray-400">one per imaging band; select one to show its sky</span>
+            <div class="flex-1" />
+            <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="nodesPending" @click="loadNodes" />
+          </div>
+        </template>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead class="text-left text-gray-500 dark:text-gray-400">
+              <tr>
+                <th class="px-2 py-1">Node</th><th class="px-2 py-1">State</th><th class="px-2 py-1">Band (MHz)</th>
+                <th class="px-2 py-1 text-right">Tracked pixels</th><th class="px-2 py-1 text-right">DM reach (pc cm⁻³)</th>
+                <th class="px-2 py-1 text-right">Candidates</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="n in nodes" :key="n.node" class="border-t border-gray-200 dark:border-gray-800 cursor-pointer"
+                :class="n.node == node ? 'bg-primary-50 dark:bg-primary-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+                @click="selectNode(n.node)">
+                <td class="px-2 py-1 font-mono">{{ n.node }}</td>
+                <td class="px-2 py-1">
+                  <UBadge :color="!n.up ? 'red' : n.conditions?.latest?.disturbed ? 'orange' : 'green'" variant="subtle" size="xs"
+                    :label="!n.up ? 'Not answering' : n.conditions?.latest?.disturbed ? 'Disturbed' : 'Running'" />
+                </td>
+                <td class="px-2 py-1 tabular-nums">{{ n.band ? `${n.band.f_lo.toFixed(2)}–${n.band.f_hi.toFixed(2)}` : '' }}</td>
+                <td class="px-2 py-1 text-right tabular-nums">{{ n.tracked ?? '' }}</td>
+                <td class="px-2 py-1 text-right tabular-nums">{{ dmReach(n) ?? '' }}</td>
+                <td class="px-2 py-1 text-right tabular-nums">{{ candCount(n) ?? '' }}</td>
+              </tr>
+              <tr v-if="!nodes.length && !nodesPending"><td colspan="6" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="selNode?.up" class="mt-3 border-t border-gray-200 dark:border-gray-800 pt-3">
+          <div class="text-sm font-medium mb-2">{{ selNode.node }}</div>
+          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-sm">
+            <div><dt class="text-gray-500 dark:text-gray-400">Channels</dt><dd class="tabular-nums">{{ selNode.band?.nchan ?? '' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Image time (ms)</dt><dd class="tabular-nums">{{ selNode.band ? (selNode.band.dt * 1000).toFixed(1) : '' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">HEALPix nside</dt><dd class="tabular-nums">{{ selNode.nside ?? '' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Beam (°)</dt><dd class="tabular-nums">{{ fmt(selNode.beam_deg) }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Threshold (S/N)</dt><dd class="tabular-nums">{{ fmt(selNode.threshold) }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Compute load</dt><dd class="tabular-nums">{{ pct(selNode.cpu_fraction) }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Lag (s)</dt><dd class="tabular-nums">{{ fmt(selNode.lag_s) }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Images missing</dt><dd class="tabular-nums">{{ selNode.images ? pct((selNode.missing_images ?? 0) / (selNode.images + (selNode.missing_images ?? 0))) : '' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Channels flagged</dt>
+              <dd class="tabular-nums" :title="selNode.rfi_flagging?.masked_mhz?.length ? `Masked at ${selNode.rfi_flagging.masked_mhz.map(f => f.toFixed(3)).join(', ')} MHz` : undefined">
+                {{ pct(selNode.rfi_flagging?.flagged_fraction_last_minute) }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">RFI candidates</dt><dd class="tabular-nums">{{ selNode.candidates?.rfi ?? '' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Test injections found</dt>
+              <dd class="tabular-nums">{{ selNode.injections?.injected ? `${selNode.injections.recovered} of ${selNode.injections.recovered + selNode.injections.missed}` : '' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Last image ({{ tz.zoneName() }})</dt>
+              <dd class="tabular-nums">{{ selNode.last_image_unix ? tz.clock(selNode.last_image_unix * 1000) : '' }}</dd></div>
+          </dl>
+          <p v-if="selNode.conditions?.latest?.disturbed" class="mt-2 text-xs text-orange-600 dark:text-orange-400">
+            Disturbed<template v-if="selNode.conditions.latest.reasons?.length"> by {{ selNode.conditions.latest.reasons.map(r => reasonLabel[r] ?? r).join(', ') }}</template><template v-if="selNode.conditions.summary?.disturbed_since"> since {{ tz.dateTime(selNode.conditions.summary.disturbed_since * 1000) }}</template>.
+          </p>
+        </div>
+        <p v-else-if="selNode" class="mt-3 text-sm text-gray-500 dark:text-gray-400">The monitor on {{ selNode.node }} is not answering.</p>
+      </UCard>
+    </div>
+
     <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
       <template #header>
-        <div class="flex items-center gap-2">
-          <span class="font-medium">Monitors</span>
-          <span class="text-sm text-gray-500 dark:text-gray-400">one per imaging band, each independent of the others</span>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="font-medium">Spectrogram</span>
+          <span v-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ selNode.node }}</span>
           <div class="flex-1" />
-          <UButton size="xs" variant="ghost" icon="i-heroicons-arrow-path" :loading="nodesPending" @click="loadNodes" />
+          <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
+          <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
+          <UButton size="xs" variant="outline" label="Display" :disabled="!!positionError || raInput === '' || decInput === ''" @click="showPosition" />
+          <span v-if="positionError" class="text-xs text-red-500">{{ positionError }}</span>
         </div>
       </template>
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-gray-500 dark:text-gray-400">
-            <tr>
-              <th class="px-2 py-1">Node</th><th class="px-2 py-1">State</th><th class="px-2 py-1">Band (MHz)</th>
-              <th class="px-2 py-1 text-right">Tracked pixels</th><th class="px-2 py-1 text-right">Beam (°)</th>
-              <th class="px-2 py-1 text-right">DM reach</th><th class="px-2 py-1 text-right">Compute load</th>
-              <th class="px-2 py-1 text-right">Lag (s)</th><th class="px-2 py-1 text-right">Candidates</th>
-              <th class="px-2 py-1 text-right">Test injections found</th>
-              <th class="px-2 py-1 text-right">Channels flagged</th><th class="px-2 py-1">Conditions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="n in nodes" :key="n.node" class="border-t border-gray-200 dark:border-gray-800">
-              <td class="px-2 py-1 font-mono">{{ n.node }}</td>
-              <td class="px-2 py-1">
-                <UBadge :color="n.up ? 'green' : 'red'" variant="subtle" size="xs" :label="n.up ? 'Running' : 'Not answering'" />
-              </td>
-              <td class="px-2 py-1">{{ n.band ? `${n.band.f_lo.toFixed(2)}–${n.band.f_hi.toFixed(2)}` : '' }}</td>
-              <td class="px-2 py-1 text-right">{{ n.tracked ?? '' }}</td>
-              <td class="px-2 py-1 text-right">{{ fmt(n.beam_deg) }}</td>
-              <td class="px-2 py-1 text-right">{{ n.tiers?.length ? Math.round(n.tiers[n.tiers.length - 1].dm_max) : '' }}</td>
-              <td class="px-2 py-1 text-right">{{ pct(n.cpu_fraction) }}</td>
-              <td class="px-2 py-1 text-right">{{ fmt(n.lag_s) }}</td>
-              <td class="px-2 py-1 text-right">{{ n.candidates ? n.candidates.stored - n.candidates.rfi - n.candidates.injection : '' }}</td>
-              <td class="px-2 py-1 text-right">{{ n.injections?.injected ? `${n.injections.recovered} of ${n.injections.recovered + n.injections.missed}` : '' }}</td>
-              <td class="px-2 py-1 text-right" :title="n.rfi_flagging?.masked_mhz?.length ? `Masked at ${n.rfi_flagging.masked_mhz.map(f => f.toFixed(3)).join(', ')} MHz` : undefined">
-                {{ pct(n.rfi_flagging?.flagged_fraction_last_minute) }}
-              </td>
-              <td class="px-2 py-1">
-                <UBadge v-if="n.conditions?.latest?.disturbed" color="orange" variant="subtle" size="xs"
-                  :label="'Disturbed' + (n.conditions.latest.reasons?.length ? ', ' + n.conditions.latest.reasons.map(r => reasonLabel[r] ?? r).join(', ') : '')"
-                  :title="n.conditions.summary?.disturbed_since ? `Since ${tz.dateTime(n.conditions.summary.disturbed_since * 1000)}` : undefined" />
-                <UBadge v-else-if="n.conditions?.latest" color="green" variant="subtle" size="xs" label="Normal" />
-              </td>
-            </tr>
-            <tr v-if="!nodes.length && !nodesPending"><td colspan="12" class="px-2 py-3 text-center text-gray-500">No monitor answered.</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <SpectrogramSkymonSpectrogram v-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
+        :hpix="pickedHpix" :dt-image="selNode?.band?.dt" :t-inf="mark?.tInf" :dm="mark?.dm" />
+      <p v-else class="text-center text-gray-500 dark:text-gray-400 py-6">
+        Click a pixel on the sky, enter a position, or open the spectrogram of a candidate.
+      </p>
     </UCard>
 
     <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
@@ -426,21 +507,5 @@ useSeoMeta({
       </div>
     </UCard>
 
-    <UCard :ui="{ body: { padding: 'p-2 sm:p-3' } }">
-      <template #header>
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="font-medium">Spectrogram of a position</span>
-          <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
-          <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-28" @keyup.enter="showPosition" />
-          <USelect v-model="hours" :options="[1, 2, 3, 6].map(h => ({ label: `last ${h} h`, value: h }))" size="xs" />
-          <UButton size="xs" variant="outline" label="Display" :disabled="!!positionError || raInput === '' || decInput === ''" @click="showPosition" />
-          <span v-if="positionError" class="text-xs text-red-500">{{ positionError }}</span>
-        </div>
-      </template>
-      <SpectrogramSkymonPixel v-if="ra != null && dec != null" :ra="ra" :dec="dec" :hours="hours" :t-inf="mark?.tInf" :dm="mark?.dm" />
-      <p v-else class="text-center text-gray-500 dark:text-gray-400 py-6">
-        Enter a position, or open the spectrogram of a candidate. Each monitor keeps the spectrum of every tracked position, averaged over 10 s, for the last six hours.
-      </p>
-    </UCard>
   </UDashboardPanelContent>
 </template>
