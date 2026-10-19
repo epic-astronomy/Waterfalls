@@ -409,7 +409,6 @@ onBeforeUnmount(() => {
         <UBadge :color="clsColor[cand.cls] ?? 'amber'" variant="subtle" size="xs" :label="clsTitle" />
         <span v-if="cand.known_source?.kind == 'pulsar'">
           <SpectrogramSkymonPulsarName :name="cand.known_source.name" :alias="cand.known_source.alias" :size="22" />
-          {{ cand.known_source.giant_pulse ? 'giant pulse' : 'single pulse' }}
         </span>
         <span v-else-if="cand.known_source" class="text-gray-500 dark:text-gray-400">{{ cand.known_source.name }}</span>
         <span class="tabular-nums">S/N {{ cand.snr.toFixed(1) }}</span>

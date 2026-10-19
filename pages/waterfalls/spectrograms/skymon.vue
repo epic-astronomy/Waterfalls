@@ -250,7 +250,7 @@ const knownLabel: Record<string, string> = { solar: 'Sun', jovian: 'Jupiter', br
 function clsText(c: Cand) {
   if (c.cls == 'known' && c.known_source?.kind == 'pulsar') {
     const ks = c.known_source
-    return ks.giant_pulse ? 'giant pulse' : 'single pulse'  // after the pulsar's name (SkymonPulsarName)
+    return hasIcon(ks.name) ? '' : 'single pulse'  // after the pulsar's name (SkymonPulsarName); the crab says it all
   }
   if (c.cls == 'known' && c.known_source) {
     const k = knownLabel[c.known_source.kind]
@@ -570,7 +570,6 @@ useSeoMeta({
                         <td class="px-2 py-1 whitespace-nowrap">
                           <UIcon v-if="r.n" :name="openPulsar == r.p.name ? 'i-heroicons-chevron-down-20-solid' : 'i-heroicons-chevron-right-20-solid'" class="w-4 h-4 align-middle text-gray-400" />
                           <SpectrogramSkymonPulsarName :name="r.p.name" :alias="r.p.alias" :size="24" />
-                          <span v-if="r.p.giant_pulses" class="ml-2 text-xs text-gray-500 dark:text-gray-400">giant pulses</span>
                         </td>
                         <td class="px-2 py-1 text-right tabular-nums">{{ r.p.dm.toFixed(2) }}</td>
                         <td class="px-2 py-1 text-right tabular-nums">{{ r.p.period_s != null ? r.p.period_s.toFixed(4) : '' }}</td>
@@ -602,7 +601,7 @@ useSeoMeta({
       </div>
 
       <!-- right: the spectrogram of what is selected, kept in view -->
-      <div ref="viewer" class="min-w-0 xl:sticky xl:top-0 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto">
+      <div ref="viewer" class="min-w-0 p-px xl:sticky xl:top-0 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto">
         <UCard :ui="{ body: { padding: 'p-2 sm:p-3' }, header: { padding: 'px-3 py-2 sm:px-4' } }">
           <template #header>
             <div class="flex flex-wrap items-center gap-3">

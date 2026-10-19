@@ -369,7 +369,7 @@ function onWheel(e: WheelEvent) {
   zoomAt(sx, sy, Math.exp(-e.deltaY * 0.0015))
 }
 function zoomBy(f: number) { zoomAt(W / 2, H / 2, f) }
-function resetView() { view.l0 = 0; view.m0 = 0; view.zoom = 1; draw() }
+function resetView() { view.l0 = 0; view.m0 = 0; view.zoom = 1; fit(); draw() }
 // centre on a position, zoomed in if the whole sky is shown
 function centreOn(ra: number, dec: number) {
   const p = project(ra, dec, lstDeg(map.value?.t_end ?? Date.now() / 1000), LAT)
@@ -381,17 +381,20 @@ function centreOn(ra: number, dec: number) {
 defineExpose({ centreOn, reload: load })
 
 let ro: ResizeObserver | undefined
+// the map's size: the width of its box, and at most about half the window's height
+function fit() {
+  const w = wrap.value?.clientWidth ?? 0
+  if (w > 0) { size.value = Math.round(Math.min(w, 620, Math.max(280, window.innerHeight * 0.55))); draw() }
+}
 let timer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
-  ro = new ResizeObserver(es => {
-    const w = es[0]?.contentRect.width ?? 0
-    if (w > 0) { size.value = Math.round(Math.min(w, 620, Math.max(280, window.innerHeight * 0.55))); draw() }
-  })
+  ro = new ResizeObserver(() => fit())
   if (wrap.value) ro.observe(wrap.value)
+  window.addEventListener('resize', fit)
   load()
   timer = setInterval(load, 60000)
 })
-onBeforeUnmount(() => { ro?.disconnect(); clearInterval(timer); cancelAnimationFrame(raf) })
+onBeforeUnmount(() => { ro?.disconnect(); window.removeEventListener('resize', fit); clearInterval(timer); cancelAnimationFrame(raf) })
 watch(() => props.node, () => { map.value = null; raw = new Float32Array(0); values = raw; tracked = new Int32Array(0); draw(); load() })
 watch([() => props.selected, () => props.markers, () => props.pulsars, stretch, showGrid, showLabels, showPulsars, colorMode], draw)
 watch(flatten, () => { prepare(); draw() })
@@ -433,13 +436,16 @@ const spanText = computed(() => {
         <UTooltip text="Zoom out" :popper="{ placement: 'left' }">
           <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-minus" aria-label="Zoom out" @click="zoomBy(1 / 1.6)" />
         </UTooltip>
-        <UTooltip text="Whole sky" :popper="{ placement: 'left' }">
-          <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-arrows-pointing-out" aria-label="Whole sky" :disabled="view.zoom == 1 && !view.l0 && !view.m0" @click="resetView" />
+        <UTooltip text="Reset to the whole sky" :popper="{ placement: 'left' }">
+          <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-arrows-pointing-in" aria-label="Reset to the whole sky" @click="resetView" />
         </UTooltip>
         <UTooltip text="Reload" :popper="{ placement: 'left' }">
           <UButton size="xs" color="gray" variant="ghost" icon="i-heroicons-arrow-path" aria-label="Reload" :loading="pending" @click="load" />
         </UTooltip>
       </div>
+      <!-- zoomed in or moved: the way back, in plain words -->
+      <UButton v-if="view.zoom != 1 || view.l0 || view.m0" size="xs" color="gray" variant="solid" icon="i-heroicons-arrows-pointing-in"
+        label="Reset" class="absolute bottom-2 left-2 z-10 shadow" @click="resetView" />
       <div v-if="hover" class="pointer-events-none absolute z-10 rounded bg-gray-900/85 px-2 py-1 text-xs text-white tabular-nums"
         :style="{ left: Math.min(hover.x + 14, size - 170) + 'px', top: hover.y + 14 + 'px' }">
         <div>RA {{ hover.ra.toFixed(2) }}°, Dec {{ hover.dec.toFixed(2) }}°</div>
