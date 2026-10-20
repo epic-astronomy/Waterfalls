@@ -79,11 +79,11 @@ const periods = [{ label: '7 days', value: 7 }, { label: '30 days', value: 30 },
 const statuses = [{ label: 'Any result', value: '' }, { label: 'Confirmed', value: 'confirmed' },
   { label: 'One band, plausible spectrum', value: 'band_limited' }, { label: 'One band, implausible spectrum', value: 'implausible' },
   { label: 'Single band only', value: 'unconfirmable' }, { label: 'Pending', value: 'pending' }]
-const reviews = [{ label: 'Any review', value: '' }, { label: 'To review', value: 'pending' }, { label: 'FRB', value: 'frb' },
+const reviews = [{ label: 'Any review', value: '' }, { label: 'Needs review', value: 'pending' }, { label: 'FRB', value: 'frb' },
   { label: 'RFI', value: 'rfi' }, { label: 'Unclear', value: 'unclear' }]
 const statusLabel: Record<string, string> = Object.fromEntries(statuses.filter(s => s.value).map(s => [s.value, s.label]))
 const statusColor: Record<string, string> = { pending: 'sky', confirmed: 'green', band_limited: 'amber', implausible: 'gray', unconfirmable: 'gray' }
-const reviewLabel: Record<string, string> = { pending: 'To review', frb: 'FRB', rfi: 'RFI', unclear: 'Unclear' }
+const reviewLabel: Record<string, string> = { pending: 'Needs review', frb: 'FRB', rfi: 'RFI', unclear: 'Unclear' }
 const stateLabel: Record<string, string> = { detected: 'detected', followup: 'measured' }
 
 const band = (d: Det) => d.f_lo_mhz != null && d.f_hi_mhz != null ? `${d.f_lo_mhz.toFixed(2)}–${d.f_hi_mhz.toFixed(2)}` : ''

@@ -93,7 +93,7 @@ const evLabel: Record<string, string> = {
 const evColor: Record<string, string> = {
   pending: 'sky', confirmed: 'green', band_limited: 'amber', implausible: 'gray', unconfirmable: 'gray', single_band: 'amber', terrestrial: 'gray'
 }
-const reviewLabel: Record<string, string> = { pending: 'To review', frb: 'FRB', rfi: 'RFI', unclear: 'Unclear', 'not needed': '' }
+const reviewLabel: Record<string, string> = { pending: 'Needs review', frb: 'FRB', rfi: 'RFI', unclear: 'Unclear', 'not needed': '' }
 const showReviewed = ref(true)
 
 // review verdicts, for logged-in users; the server checks the session with Hanko
