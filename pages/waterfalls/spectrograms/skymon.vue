@@ -166,39 +166,40 @@ const selectedHpix = computed(() => {
   if (pickedHpix.value != null) return pickedHpix.value
   return ra.value != null && dec.value != null && mapNside.value ? radec2pix(mapNside.value, ra.value, dec.value) : null
 })
-const raInput = ref(ra.value != null ? ra.value.toFixed(3) : '')
-const decInput = ref(dec.value != null ? dec.value.toFixed(3) : '')
 const mark = ref<{ tInf: number, dm: number } | null>(null)
 // a candidate whose kept data are shown instead of the live pixel
 const openCand = ref<{ node: string, id: string } | null>(typeof route.query.cand == 'string' && route.query.cand.includes(':')
   ? { node: route.query.cand.split(':')[0], id: route.query.cand.split(':').slice(1).join(':') } : null)
 const skyMap = ref<{ centreOn: (ra: number, dec: number) => void } | null>(null)
-const positionError = computed(() => {
-  if (raInput.value === '' && decInput.value === '') return ''
-  const r = Number(raInput.value), d = Number(decInput.value)
-  if (!(r >= 0 && r < 360)) return 'Right ascension is in degrees, from 0 up to 360.'
-  if (!(d >= -90 && d <= 90)) return 'Declination is in degrees, from −90 to 90.'
-  return ''
-})
 function setPosition(r: number, d: number, hpix: number | null = null) {
   ra.value = r
   dec.value = d
   pickedHpix.value = hpix
-  raInput.value = r.toFixed(3)
-  decInput.value = d.toFixed(3)
 }
-function showPosition() {
-  if (positionError.value || raInput.value === '' || decInput.value === '') return
-  setPosition(Number(raInput.value), Number(decInput.value))
-  mark.value = null
-  openCand.value = null
-  skyMap.value?.centreOn(ra.value!, dec.value!)
-}
+// the candidate of the position shown, kept while its pixel is viewed live, so the
+// viewer can switch back to its burst
+const lastCand = ref<{ node: string, id: string } | null>(openCand.value)
 function onPick(p: { hpix: number, nside: number, ra: number, dec: number }) {
   setPosition(p.ra, p.dec, p.hpix)
   mark.value = null
   openCand.value = null
+  lastCand.value = null
 }
+// what the viewer shows of the position: the burst's kept data, the live search
+// window, or the 10 s averages (shared with SkymonSpectrogram)
+const resolution = useState<'live' | 'avg'>('skymon-spec-resolution', () => 'live')
+const specHours = useState('skymon-spec-hours', () => 1)
+const viewMode = computed(() => openCand.value ? 'burst' : resolution.value)
+function setView(m: string) {
+  if (m == 'burst') { if (lastCand.value) openCand.value = lastCand.value; return }
+  openCand.value = null
+  resolution.value = m as 'live' | 'avg'
+}
+const viewModes = computed(() => [
+  ...(lastCand.value ? [{ value: 'burst', label: 'Burst' }] : []),
+  { value: 'live', label: `Live, ${((selNode.value?.band?.dt ?? 0.0836) * 1000).toFixed(1)} ms` },
+  { value: 'avg', label: '10 s averages' }
+])
 function selectNode(n: string) {
   if (n == node.value) return
   node.value = n
@@ -209,6 +210,7 @@ function showCandidate(c: Cand) {
   setPosition(c.ra, c.dec)
   mark.value = { tInf: c.t_inf, dm: c.dm }
   openCand.value = c.node && c.id ? { node: c.node, id: c.id } : null
+  lastCand.value = openCand.value
   skyMap.value?.centreOn(c.ra, c.dec)
 }
 watch([node, ra, dec, sinceH, showInjections, openCand, () => tab.value, () => frbView.value], () => {
@@ -302,6 +304,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 const frbIncludeCount = computed(() => frbView.value == 'candidates'
   ? [showInjections.value, showRfi.value, showKnown.value].filter(Boolean).length
   : [showInjEvents.value, showUnconfirmable.value, showReviewed.value, showTerrestrial.value].filter(Boolean).length)
+// the viewer's title for an open candidate: what it is and when it arrived, by its
+// arrival at infinite frequency (the class itself is in the badge below)
+const viewerTitle = computed(() => {
+  const o = openCand.value
+  const c = o && [...cands.value, ...pulses.value].find(x => x.node == o.node && x.id == o.id)
+  if (!c) return 'Burst'
+  const what = c.cls == 'known' && c.known_source?.kind == 'pulsar' ? 'Pulse' : c.cls == 'rfi' ? 'Signal' : 'Burst'
+  return `${what} at ${tz.clock(c.t_inf * 1000)} ${tz.zoneName(c.t_inf * 1000)}`
+})
 const isOpen = (c: Cand) => openCand.value?.node == c.node && openCand.value?.id == c.id
 // an event's bands, lowest frequency first: what each found or measured, and its data if kept
 function eventBands(e: Ev) {
@@ -329,6 +340,7 @@ watch(openCand, c => {
 
 // refreshed every minute while the page is open (in the browser only)
 let timer: ReturnType<typeof setInterval> | undefined
+let nodeTimer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   tz.restore()
   try { canReview.value = !!hanko?.session.isValid() } catch { canReview.value = false }
@@ -336,9 +348,11 @@ onMounted(() => {
   loadCands()
   loadEvents()
   loadPulsars()
-  timer = setInterval(() => { loadNodes(); loadCands(); loadEvents(); loadPulsars() }, 60000)
+  // the lists every 15 s, so a burst seen in a spectrogram is soon in them; the bands every minute
+  timer = setInterval(() => { loadCands(); loadEvents(); loadPulsars() }, 15000)
+  nodeTimer = setInterval(loadNodes, 60000)
 })
-onBeforeUnmount(() => clearInterval(timer))
+onBeforeUnmount(() => { clearInterval(timer); clearInterval(nodeTimer) })
 
 useSeoMeta({
   title: 'All-sky monitor @ LWA-Sevilleta',
@@ -636,18 +650,22 @@ useSeoMeta({
         <UCard :ui="{ body: { padding: 'p-2 sm:p-3' }, header: { padding: 'px-3 py-2 sm:px-4' } }">
           <template #header>
             <div class="flex flex-wrap items-center gap-3">
-              <span class="font-medium">{{ openCand ? 'Candidate' : 'Spectrogram' }}</span>
+              <span class="font-medium">{{ openCand ? viewerTitle : 'Spectrogram' }}</span>
               <span v-if="openCand" class="text-sm text-gray-500 dark:text-gray-400">{{ bandName(openCand.node) }}</span>
-              <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ bandName(selNode.node) }}, live</span>
+              <span v-else-if="selNode" class="text-sm text-gray-500 dark:text-gray-400">{{ bandName(selNode.node) }}</span>
               <div class="flex-1" />
-              <UInput v-model="raInput" placeholder="RA (°)" size="xs" class="w-24" @keyup.enter="showPosition" />
-              <UInput v-model="decInput" placeholder="Dec (°)" size="xs" class="w-24" @keyup.enter="showPosition" />
-              <UButton size="xs" variant="outline" label="Display" :disabled="!!positionError || raInput === '' || decInput === ''" @click="showPosition" />
-              <span v-if="positionError" class="text-xs text-red-500 w-full">{{ positionError }}</span>
+              <template v-if="ra != null && dec != null">
+                <UButtonGroup size="xs" orientation="horizontal">
+                  <UButton v-for="m in viewModes" :key="m.value" :label="m.label"
+                    :color="viewMode == m.value ? 'primary' : 'gray'" :variant="viewMode == m.value ? 'solid' : 'outline'"
+                    @click="setView(m.value)" />
+                </UButtonGroup>
+                <USelect v-if="viewMode == 'avg'" v-model="specHours" size="xs"
+                  :options="[{ label: 'last 30 min', value: 0.5 }, { label: 'last 1 h', value: 1 }, { label: 'last 2 h', value: 2 }, { label: 'last 6 h', value: 6 }]" />
+              </template>
             </div>
           </template>
-          <SpectrogramSkymonCandidate v-if="openCand" :node="openCand.node" :id="openCand.id"
-            @live="openCand = null; mark = null" />
+          <SpectrogramSkymonCandidate v-if="openCand" :node="openCand.node" :id="openCand.id" />
           <SpectrogramSkymonSpectrogram v-else-if="node && ra != null && dec != null" :node="node" :ra="ra" :dec="dec"
             :hpix="pickedHpix" :dt-image="selNode?.band?.dt" :t-inf="mark?.tInf" :dm="mark?.dm" />
           <p v-else class="text-center text-gray-500 dark:text-gray-400 py-16">Select a pixel, a candidate or a pulse.</p>

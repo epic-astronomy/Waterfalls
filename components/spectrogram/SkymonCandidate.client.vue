@@ -25,7 +25,6 @@ interface CandData {
 }
 
 const props = defineProps<{ node: string, id: string }>()
-const emit = defineEmits<{ live: [] }>()
 
 const rtConfig = useRuntimeConfig()
 const colorMode = useColorMode()
@@ -286,7 +285,7 @@ function drawMain() {
   Plotly.react(el, traces, {
     height: 520,
     margin: { t: 45, b: 55, l: 70, r: 20 },
-    title: { text: `${clsTitle.value} S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)} - ${fc.toFixed(2)} MHz | LWA-Sevilleta`,
+    title: { text: `S/N ${c.snr.toFixed(1)}, DM ${c.dm.toFixed(1)} - ${fc.toFixed(2)} MHz | LWA-Sevilleta`,
       font: font(el.clientWidth < 760 ? 14 : 18) },
     xaxis: { range: [tz.plotTime(w[0]), tz.plotTime(w[1])], title: { text: `Time (${tz.zoneName(w[0])})`, font: font(16) },
       tickfont: { color: ink, family: 'Courier New, monospace' }, tickcolor: ink, anchor: 'y', tickformat: '%H:%M:%S', nticks: 6 },
@@ -426,14 +425,15 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="cand" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         <span>RA {{ cand.ra.toFixed(2) }}°, Dec {{ cand.dec.toFixed(2) }}°, el {{ cand.el.toFixed(0) }}°</span>
-        <span>{{ tz.dateTime(cand.t_inf * 1000) }} {{ tz.zoneName(cand.t_inf * 1000) }}<template v-if="sweep">, in band {{ tz.clock(sweep[0] * 1000) }}–{{ tz.clock(sweep[1] * 1000) }}</template></span>
+        <span :title="'The arrival extrapolated to infinite frequency, where the dispersion delay is zero'">
+          infinite frequency {{ tz.dateTime(cand.t_inf * 1000) }} {{ tz.zoneName(cand.t_inf * 1000) }}</span>
+        <span v-if="sweep && band" :title="'From the top of the band to its bottom'">
+          crossing {{ band.lo.toFixed(2) }}–{{ band.hi.toFixed(2) }} MHz {{ tz.clock(sweep[0] * 1000) }}–{{ tz.clock(sweep[1] * 1000) }}</span>
       </div>
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-sm">
         <UCheckbox v-model="dedispOn" label="Dedispersed" />
         <UCheckbox v-model="showTrack" :label="dedispOn ? 'Arrival' : 'Dispersion curve'" />
         <UCheckbox v-model="normOn" label="Normalise" />
-        <div class="flex-1" />
-        <UButton size="xs" variant="outline" label="Live pixel" icon="i-heroicons-signal" @click="emit('live')" />
       </div>
     </div>
 

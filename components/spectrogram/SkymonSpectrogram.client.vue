@@ -34,6 +34,34 @@ const showDispersion = ref(true)
 
 const band = shallowRef<PixelBand | null>(null)
 let rows: Float32Array[] = []
+let times: number[] = []  // of rows (unix s)
+// Live: the monitor keeps only its latest search window (about 30 s), so the windows
+// are joined here as they come, for up to LIVE_SPAN_S while the pixel is shown
+const LIVE_SPAN_S = 600
+let liveT: number[] = []
+let liveRows: Float32Array[] = []
+function resetLive() { liveT = []; liveRows = [] }
+function joinLive(t: number[], r: Float32Array[]) {
+  const dt = props.dtImage ?? 0.0836
+  const last = liveT.length ? liveT[liveT.length - 1] : -Infinity
+  const k = t.findIndex(x => x > last + dt / 2)
+  if (k < 0) return
+  const gap = liveT.length && t[k] - last > 3 * dt
+  const nc = r.length
+  if (!liveRows.length) liveRows = Array.from({ length: nc }, () => new Float32Array(0))
+  const add = (gap ? 1 : 0) + t.length - k
+  // a blank column where windows were missed (the tab hidden, a slow reply)
+  const newT = [...liveT, ...(gap ? [last + dt] : []), ...t.slice(k)]
+  const drop = Math.max(0, newT.findIndex(x => x >= newT[newT.length - 1] - LIVE_SPAN_S))
+  liveRows = liveRows.map((row, c) => {
+    const out = new Float32Array(row.length + add)
+    out.set(row)
+    if (gap) out[row.length] = NaN
+    out.set(r[c].subarray(k), row.length + (gap ? 1 : 0))
+    return drop ? out.subarray(drop) : out
+  })
+  liveT = newT.slice(drop)
+}
 const pending = ref(false)
 const error = ref('')
 const divId = `skymon-spec-${uuidv4()}`
@@ -115,6 +143,12 @@ async function load() {
     band.value = b
     error.value = !b?.up ? 'The monitor did not answer.' : ''
     rows = b?.up && b.tracked && (b.times?.length ?? 0) > 1 ? decode(b) : []
+    times = b?.times ?? []
+    if (resolution.value == 'live' && rows.length) {
+      joinLive(times, rows)
+      rows = liveRows
+      times = liveT
+    }
     rfiMask.value = null
     rfiRequest++
     rfiPending.value = false
@@ -144,7 +178,7 @@ function draw() {
   const m = rfiOn.value ? rfiMask.value : null
   if (m) z.forEach((row, c) => { const mk = m[c]; if (mk) for (let t = 0; t < row.length; t++) if (!mk[t]) row[t] = NaN })
   if (normOn.value) z.forEach(normaliseChannel)
-  const times = b.times ?? []
+  // the rows shown: the joined live windows, or the averages as they came
   const x = times.map(t => tz.plotTime(t * 1000))
   const y = b.freqs_mhz ?? []
   const df = y.length > 1 ? y[1] - y[0] : 0
@@ -199,8 +233,8 @@ function schedule() {
   clearInterval(timer)
   if (autoOn.value) timer = setInterval(() => { if (!pending.value && !document.hidden) load() }, resolution.value == 'live' ? 5000 : 30000)
 }
-watch(() => [props.node, props.ra, props.dec, props.hpix], () => { band.value = null; rows = []; draw(); load() })
-watch([resolution, hours], () => { band.value = null; rows = []; draw(); load(); schedule() })
+watch(() => [props.node, props.ra, props.dec, props.hpix], () => { band.value = null; rows = []; resetLive(); draw(); load() })
+watch([resolution, hours], () => { band.value = null; rows = []; resetLive(); draw(); load(); schedule() })
 watch(autoOn, schedule)
 watch([normOn, colorMode, () => tz.mode.value, showDispersion, () => props.tInf, () => props.dm], () => draw())
 watch(rfiOn, on => { if (on && !rfiMask.value) requestRfi(); else draw() })
@@ -215,19 +249,12 @@ onBeforeUnmount(() => {
   if (plotDiv.value) Plotly.purge(plotDiv.value)
 })
 
-const resolutionOptions = computed(() => [
-  { label: `Live, ${((props.dtImage ?? 0.0836) * 1000).toFixed(1)} ms`, value: 'live' },
-  { label: 'Averages, 10 s', value: 'avg' }
-])
-const hoursOptions = [{ label: 'last 30 min', value: 0.5 }, { label: 'last 1 h', value: 1 }, { label: 'last 2 h', value: 2 }, { label: 'last 6 h', value: 6 }]
 </script>
 
 <template>
   <!-- one section of the viewer: controls, then the plot, divided by a rule -->
   <div class="divide-y divide-gray-200 dark:divide-gray-800">
     <div class="pb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-      <USelect v-model="resolution" size="xs" :options="resolutionOptions" />
-      <USelect v-if="resolution == 'avg'" v-model="hours" size="xs" :options="hoursOptions" />
       <UCheckbox v-if="tInf != null && dm != null" v-model="showDispersion" label="Dispersion curve" />
       <UCheckbox v-model="normOn" label="Normalise" />
       <div class="flex items-center gap-2">
