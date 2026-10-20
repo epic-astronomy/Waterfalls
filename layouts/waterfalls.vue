@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const route = useRoute()
 const appConfig = useAppConfig()
-const { isHelpSlideoverOpen, isSidebarHidden } = useDashboard()
+const { isHelpSlideoverOpen, isSidebarHidden, toggleSidebar } = useDashboard()
 
 const links = [{
   id: 'home',
@@ -71,6 +71,13 @@ const groups = [{
       <UDashboardNavbar class="!border-transparent" :ui="{ left: 'flex-1' }">
         <template #left>
           <AppsDropdown />
+        </template>
+        <!-- hides the sidebar on wide screens ([); PageToolbar shows it again -->
+        <template #right>
+          <UTooltip text="Hide the sidebar" :shortcuts="['[']" class="hidden lg:flex">
+            <UButton color="gray" variant="ghost" icon="i-heroicons-chevron-double-left" aria-label="Hide the sidebar"
+              @click="toggleSidebar" />
+          </UTooltip>
         </template>
       </UDashboardNavbar>
 

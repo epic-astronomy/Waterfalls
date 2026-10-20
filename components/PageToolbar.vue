@@ -2,7 +2,8 @@
 // The header bar of a page, used for its controls or current selection
 // rather than a title (the sidebar names the page). The contents sit in a
 // rounded box styled like the cards below; the menu button for small screens
-// stays at its left. On wide screens a button there hides the sidebar ([).
+// stays at its left. While the sidebar is hidden (its own header has the button
+// that hides it), a button here shows it again ([).
 const { isSidebarHidden, toggleSidebar } = useDashboard()
 </script>
 
@@ -12,9 +13,9 @@ const { isSidebarHidden, toggleSidebar } = useDashboard()
     left: 'flex-1 flex items-stretch gap-1.5 min-w-0'
   }">
     <template #left>
-      <UTooltip :text="isSidebarHidden ? 'Show the sidebar' : 'Hide the sidebar'" :shortcuts="['[']" class="hidden lg:flex">
-        <UButton color="gray" variant="ghost" class="self-center" :aria-label="isSidebarHidden ? 'Show the sidebar' : 'Hide the sidebar'"
-          :icon="isSidebarHidden ? 'i-heroicons-chevron-double-right' : 'i-heroicons-chevron-double-left'" @click="toggleSidebar" />
+      <UTooltip v-if="isSidebarHidden" text="Show the sidebar" :shortcuts="['[']" class="hidden lg:flex">
+        <UButton color="gray" variant="ghost" class="self-center" aria-label="Show the sidebar"
+          icon="i-heroicons-chevron-double-right" @click="toggleSidebar" />
       </UTooltip>
       <div class="flex-1 min-w-0 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-3 py-2
         bg-white dark:bg-gray-900 ring-1 ring-gray-200 dark:ring-gray-800 rounded-md shadow">
