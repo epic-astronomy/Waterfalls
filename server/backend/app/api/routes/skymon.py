@@ -13,6 +13,7 @@ import base64
 import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -336,14 +337,21 @@ def combiner_status():
 @router.post("/events/{eid}/review")
 def review(eid: str, request: Request, verdict: str = Body(..., pattern="^(frb|rfi|unclear)$"),
            note: str = Body("", max_length=2000)):
-    """Record an admin's verdict on a combiner event (every route here needs an admin, see api/main.py)"""
+    """
+    Record an admin's verdict on an event (every route here needs an admin, see
+    api/main.py). The combiner holds the events of its last SKYMON_COMBINER_KEEP_H
+    hours and writes them to the catalogue itself, so a review of a recent event
+    goes to it; an older event is reviewed in the catalogue directly, so an
+    event can be reviewed whenever its data have been looked at.
+    """
     user = request.state.user
-    body = json.dumps(dict(verdict=verdict, note=note,
-                           by=user["email"] or user["id"])).encode()
+    by = user["email"] or user["id"]
+    body = json.dumps(dict(verdict=verdict, note=note, by=by)).encode()
     hdr = {"Content-Type": "application/json"}
     if settings.SKYMON_TOKEN:
         hdr["X-Skymon-Token"] = settings.SKYMON_TOKEN
     urls = [u.strip().rstrip("/") for u in settings.SKYMON_COMBINER_URLS.split(",") if u.strip()]
+    answered = False
     for u in urls:
         try:
             req = urllib.request.Request(f"{u}/api/events/{urllib.parse.quote(eid)}/review",
@@ -352,11 +360,37 @@ def review(eid: str, request: Request, verdict: str = Body(..., pattern="^(frb|r
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                continue  # another combiner location, or an unknown event
+                answered = True  # this combiner does not hold it (anymore)
+                continue
             raise HTTPException(status_code=e.code, detail="the combiner refused the review")
         except Exception:
             continue
-    raise HTTPException(status_code=503, detail="the combiner did not answer")
+    return _catalogue_review(eid, verdict, note, by, combiner_answered=answered)
+
+
+def _catalogue_review(eid: str, verdict: str, note: str, by: str, combiner_answered: bool) -> dict:
+    """The verdict written to the catalogue's copy of an event the combiner no longer holds"""
+    from sqlalchemy import text
+    try:
+        with _catalogue().begin() as conn:
+            ev = conn.execute(text("SELECT t_inf FROM skymon.events WHERE id = :id FOR UPDATE"),
+                              dict(id=eid)).first()
+            if ev is None:
+                raise HTTPException(status_code=404, detail="unknown event")
+            # a recent event is still the combiner's: written here, its next update would undo it
+            if not combiner_answered and time.time() - ev.t_inf.timestamp() < settings.SKYMON_COMBINER_KEEP_H * 3600:
+                raise HTTPException(status_code=503, detail="the combiner did not answer; try again shortly")
+            entry = json.dumps(dict(verdict=verdict, by=str(by)[:80], note=note[:2000], at=time.time()))
+            r = conn.execute(text(
+                "UPDATE skymon.events SET review = :v, updated = now(), record = jsonb_set(jsonb_set(record, "
+                "'{reviews}', coalesce(record->'reviews', '[]'::jsonb) || jsonb_build_array(CAST(:e AS jsonb))), "
+                "'{review}', to_jsonb(CAST(:v AS text))) WHERE id = :id "
+                "RETURNING review, record->'reviews' AS reviews"), dict(v=verdict, e=entry, id=eid)).first()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail="the catalogue is not available") from e
+    return dict(id=eid, review=r.review, reviews=r.reviews or [])
 
 
 # ---------------------------------------------------------------- the catalogue
@@ -454,6 +488,44 @@ def catalogue(kind: str = Query("frb", pattern="^(frb|giant_pulse)$"),
                         reviews=e.reviews or [], spectrum=e.spectrum, disturbed=bool(e.disturbed),
                         available_from=_lock_until(e.t_inf), detections=by.get(e.id, [])))
     return dict(count=n, rows=out)
+
+
+@router.get("/catalogue/events/{eid}.zip")
+def catalogue_event_zip(eid: str):
+    """
+    Everything kept of an event, for analysis: its record (event.json) and, for each
+    band, the detection's archived data (.npz) and record (.json), in one zip
+    """
+    import tempfile
+    import zipfile
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import text
+    try:
+        with _catalogue().connect() as conn:
+            ev = conn.execute(text("SELECT record FROM skymon.events WHERE id = :id"), dict(id=eid)).first()
+            dets = conn.execute(text("SELECT node, archive_path FROM skymon.detections WHERE event_id = :id"),
+                                dict(id=eid)).fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail="the catalogue is not available") from e
+    if ev is None:
+        raise HTTPException(status_code=404, detail="unknown event")
+    root = os.path.realpath(settings.SKYMON_ARCHIVE_ROOT)
+    tmp = tempfile.SpooledTemporaryFile(max_size=64 << 20)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("event.json", json.dumps(ev.record, indent=1))
+        for d in dets:
+            for ext in ("npz", "json"):
+                path = os.path.realpath(os.path.join(root, d.archive_path + "." + ext))
+                if path.startswith(root + os.sep) and os.path.exists(path):
+                    # the npz files are compressed already
+                    z.write(path, f"{d.node}/{os.path.basename(path)}",
+                            compress_type=zipfile.ZIP_STORED if ext == "npz" else zipfile.ZIP_DEFLATED)
+    size = tmp.tell()
+    tmp.seek(0)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", eid)
+    return StreamingResponse(iter(lambda: tmp.read(1 << 20), b""), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="skymon-{safe}.zip"',
+                                      "Content-Length": str(size)})
 
 
 @router.get("/catalogue/data/{node}/{cand_id}.{ext}")

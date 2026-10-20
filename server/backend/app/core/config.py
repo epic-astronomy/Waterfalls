@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     # the combiner runs on one worker at a time; whichever answers is used
     SKYMON_COMBINER_URLS: str = ",".join(f"http://epic{i}:8096" for i in range(1, 7))
     SKYMON_TIMEOUT_S: float = 2.0
+    # how long the combiner holds an event (its keep_hours); older events are
+    # reviewed in the catalogue directly
+    SKYMON_COMBINER_KEEP_H: float = 48.0
     # review verdicts (admins only): sent to the combiner with this token (its SKYMON_TOKEN)
     SKYMON_TOKEN: str = Field('', validate_default=False)
     NUXT_PUBLIC_HANKO_API_URL: str = Field('', validate_default=False)

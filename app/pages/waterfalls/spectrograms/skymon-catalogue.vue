@@ -1,9 +1,9 @@
 <script setup lang="ts">
 definePageMeta({ middleware: 'admin' })
-// The catalogue of the all-sky monitor: every FRB event, each opening into its
-// detections in the bands, and every giant pulse, from the head database. The
-// archived data of each detection can be downloaded by anyone 30 days after
-// detection, and by a logged-in team member at once.
+// The catalogue of the all-sky monitor, for admins: every FRB event, each
+// opening into its detections in the bands, and every giant pulse, from the
+// head database. An event's data download per band or all together (zip), and
+// it is reviewed here as FRB, RFI or unclear, at any time after it was found.
 const rtConfig = useRuntimeConfig()
 const tz = useTimeZone()
 const route = useRoute()
@@ -65,6 +65,30 @@ watch([kind, sinceDays, status, review, page], () => {
 })
 
 const expanded = ref<string | null>(null)
+
+// review: FRB, RFI or unclear, with a note; the API sends it to the combiner
+// while it still holds the event, and to the catalogue afterwards
+const note = ref('')
+const reviewing = ref<string | null>(null)
+const reviewMsg = ref<Record<string, string>>({})
+async function submitReview(e: Ev, verdict: 'frb' | 'rfi' | 'unclear') {
+  reviewing.value = e.id
+  reviewMsg.value[e.id] = ''
+  try {
+    const r = await $fetch<{ review: string, reviews: Ev['reviews'] }>(
+      rtConfig.public.fastapiBase + `/skymon/events/${encodeURIComponent(e.id)}/review`,
+      { method: 'POST', body: { verdict, note: note.value } })
+    e.review = r.review
+    e.reviews = r.reviews
+    note.value = ''
+    reviewMsg.value[e.id] = `Saved as ${reviewLabel[verdict]}.`
+  } catch (err: any) {
+    reviewMsg.value[e.id] = err?.data?.detail ?? 'The review could not be saved.'
+  } finally {
+    reviewing.value = null
+  }
+}
+const zipUrl = (e: Ev) => `${rtConfig.public.fastapiBase}/skymon/catalogue/events/${encodeURIComponent(e.id)}.zip`
 const events = computed(() => kind.value == 'frb' ? rows.value as Ev[] : [])
 const pulses = computed(() => kind.value == 'giant_pulse' ? rows.value as Det[] : [])
 
@@ -157,7 +181,7 @@ useSeoMeta({
                     <td :class="[td, 'text-right tabular-nums']">{{ fmt(e.ra, 2) }}</td>
                     <td :class="[td, 'text-right tabular-nums']">{{ fmt(e.dec, 2) }}</td>
                     <td :class="td">{{ e.n_seen != null ? `${e.n_seen} of ${e.n_could_see ?? e.n_seen}` : '' }}</td>
-                    <td :class="td">{{ now >= e.available_from ? 'open' : `from ${day(e.available_from)}` }}</td>
+                    <td :class="td">{{ e.detections.length ? `${e.detections.filter(d => d.archived).length} of ${e.detections.length} archived` : '' }}</td>
                   </tr>
                   <template v-if="expanded == e.id">
                     <tr class="bg-gray-50 dark:bg-gray-800/40">
@@ -193,11 +217,24 @@ useSeoMeta({
                         <span v-else class="text-sm text-gray-500 dark:text-gray-400">No detection catalogued.</span>
                       </td>
                     </tr>
-                    <tr v-if="e.reviews?.length || e.spectrum?.consistent_with?.length" class="bg-gray-50 dark:bg-gray-800/40">
-                      <td colspan="9" class="px-12 py-2 text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-                        <div v-if="e.spectrum?.consistent_with?.length">The S/N measured in the bands is consistent with {{ e.spectrum.consistent_with.join(', or with ') }}.</div>
-                        <div v-for="(r, i) in e.reviews" :key="i">
+                    <tr class="bg-gray-50 dark:bg-gray-800/40">
+                      <td colspan="9" class="px-12 py-3 space-y-2">
+                        <div v-if="e.spectrum?.consistent_with?.length" class="text-xs text-muted">The S/N measured in the bands is consistent with {{ e.spectrum.consistent_with.join(', or with ') }}.</div>
+                        <div v-for="(r, i) in e.reviews" :key="i" class="text-xs text-muted">
                           {{ tz.dateTime(r.at * 1000) }}, {{ r.by }} reviewed it as {{ reviewLabel[r.verdict] ?? r.verdict }}<template v-if="r.note">. {{ r.note }}</template>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <UButton size="xs" color="neutral" variant="outline" icon="i-heroicons-arrow-down-tray"
+                            label="Download all bands (zip)" :to="zipUrl(e)" external download />
+                          <template v-if="e.status != 'pending'">
+                            <USeparator orientation="vertical" class="h-5 mx-1" />
+                            <UInput v-model="note" size="xs" placeholder="Note (optional)" class="w-64" @click.stop />
+                            <UButton size="xs" color="success" variant="soft" label="FRB" :loading="reviewing == e.id" @click.stop="submitReview(e, 'frb')" />
+                            <UButton size="xs" color="error" variant="soft" label="RFI" :loading="reviewing == e.id" @click.stop="submitReview(e, 'rfi')" />
+                            <UButton size="xs" color="neutral" variant="soft" label="Unclear" :loading="reviewing == e.id" @click.stop="submitReview(e, 'unclear')" />
+                          </template>
+                          <span v-else class="text-xs text-muted">Reviewed once the combiner has decided the event.</span>
+                          <span v-if="reviewMsg[e.id]" class="text-xs text-muted">{{ reviewMsg[e.id] }}</span>
                         </div>
                       </td>
                     </tr>
