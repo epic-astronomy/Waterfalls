@@ -4,7 +4,7 @@ description: Interactive spectrograms of radio sources monitored by the EPIC ima
 navigation: false
 hero:
   title: EPIC Waterfalls
-  description: A spectral data playground
+  description: Spectral Analysis with Ion Thrusters
   icon: i-material-symbols-waterfall-chart
 cards:
   - title: Spectrograms @LWA-SV
