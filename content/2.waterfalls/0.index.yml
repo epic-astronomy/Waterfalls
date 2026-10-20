@@ -23,3 +23,7 @@ cards:
   - title: All-sky monitor
     description: Real-time search of the whole visible sky for dispersed bursts in every imaging band, and the spectrogram of any position.
     to: /waterfalls/spectrograms/skymon
+
+  - title: All-sky catalogue
+    description: Every FRB event and giant pulse found by the all-sky monitor, with the data of each detection.
+    to: /waterfalls/spectrograms/skymon-catalogue

@@ -32,7 +32,11 @@ const links = [{
     to: '/waterfalls/spectrograms/frb'
   }, {
     label: 'All-sky monitor',
-    to: '/waterfalls/spectrograms/skymon'
+    to: '/waterfalls/spectrograms/skymon',
+    exact: true
+  }, {
+    label: 'All-sky catalogue',
+    to: '/waterfalls/spectrograms/skymon-catalogue'
   }
     // ,{
     //   label:'Plotly test',

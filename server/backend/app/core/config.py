@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     SKYMON_REVIEWERS: str = Field('', validate_default=False)
     NUXT_PUBLIC_HANKO_API_URL: str = Field('', validate_default=False)
     SKYMON_PIXEL_TIMEOUT_S: float = 10.0
+    # the catalogue (schema skymon, written by the combiner): in the website's own
+    # database unless this names another (a libpq DSN or an SQLAlchemy URL)
+    SKYMON_CATALOGUE_DSN: str = Field('', validate_default=False)
+    # the archive the catalogue's data are served from, and the days after detection
+    # before anyone (not only a logged-in team member) may download them
+    SKYMON_ARCHIVE_ROOT: str = "/FileStore/epic_skymon/archive"
+    SKYMON_LOCK_DAYS: float = 30.0
     WATCHDOG_CHIME_SECRET: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_TOKEN: str = Field('',validate_default=False)
     SLACK_CHIME_NOTIFIER_CHANNEL: str = Field('',validate_default=False)

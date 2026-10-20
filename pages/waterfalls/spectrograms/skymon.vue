@@ -206,6 +206,16 @@ function selectNode(n: string) {
   pickedHpix.value = null  // the pixel of this position on the new monitor's grid
 }
 function showCandidate(c: Cand) {
+  if (!c.id) {  // a tallied pulse, without data: the 10 s averages at its position, its arrival marked
+    if (c.node) selectNode(c.node)
+    setPosition(c.ra, c.dec)
+    mark.value = { tInf: c.t_inf, dm: c.dm }
+    openCand.value = null
+    lastCand.value = null
+    resolution.value = 'avg'
+    skyMap.value?.centreOn(c.ra, c.dec)
+    return
+  }
   if (c.node) selectNode(c.node)
   setPosition(c.ra, c.dec)
   mark.value = { tInf: c.t_inf, dm: c.dm }
@@ -262,8 +272,22 @@ async function loadPulsars() {
   try { if (!pulsars.value.length) pulsars.value = await $fetch<Pulsar[]>(rtConfig.public.fastapiBase + '/skymon/pulsars') }
   catch { pulsars.value = [] }
   try {
-    const known = await $fetch<Cand[]>(rtConfig.public.fastapiBase + '/skymon/candidates', { query: { since_h: sinceH.value, cls: 'known', limit: 5000 } })
-    pulses.value = known.filter(c => c.known_source?.kind == 'pulsar')
+    // giant pulses are stored (with data); the single pulses of ordinary pulsars are only
+    // tallied by the monitors, for the last 24 h (without data: they open the averages)
+    const [known, tally] = await Promise.all([
+      $fetch<Cand[]>(rtConfig.public.fastapiBase + '/skymon/candidates', { query: { since_h: sinceH.value, cls: 'known', limit: 5000 } }),
+      $fetch<Record<string, [number, number, number, string][]>>(rtConfig.public.fastapiBase + '/skymon/pulsars/pulses').catch(() => ({}))
+    ])
+    const since = Date.now() / 1000 - sinceH.value * 3600
+    const tallied: Cand[] = []
+    for (const [name, ps] of Object.entries(tally)) {
+      const p = pulsars.value.find(x => x.name == name)
+      if (!p) continue
+      for (const [t, snr, dm, node] of ps) if (t >= since)
+        tallied.push({ id: '', node, cls: 'known', snr, dm, t_inf: t, ra: p.ra_deg, dec: p.dec_deg,
+          known_source: { kind: 'pulsar', name, sep_deg: 0 } } as Cand)
+    }
+    pulses.value = [...known.filter(c => c.known_source?.kind == 'pulsar'), ...tallied]
   } catch { pulses.value = [] }
   finally { pulsesPending.value = false }
 }

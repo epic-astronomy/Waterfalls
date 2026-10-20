@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -205,6 +206,22 @@ def pulsars():
     return []
 
 
+@router.get("/pulsars/pulses")
+def pulsar_pulses():
+    """
+    The single pulses of ordinary pulsars in the last 24 h, which the monitors tally
+    rather than store: {name: [[arrival, S/N, DM, node], ...]}, newest last
+    """
+    out: dict[str, list] = {}
+    for n, r in _ask_all("/api/pulsars/pulses", settings.SKYMON_TIMEOUT_S).items():
+        if isinstance(r, dict):
+            for name, ps in r.items():
+                out.setdefault(name, []).extend([*p[:3], n] for p in ps)
+    for ps in out.values():
+        ps.sort(key=lambda p: p[0])
+    return out
+
+
 _skymaps: dict[tuple[str, int], tuple[float, dict]] = {}
 
 
@@ -316,7 +333,7 @@ def combiner_status():
     return dict(up=st is not None, **(st or {}))
 
 
-def _hanko_user(request: Request) -> dict:
+def _hanko_user(request: Request, reviewer: bool = True) -> dict:
     """
     The logged-in user, checked with the Hanko API itself: the session token
     from the hanko cookie (sent with every request to this origin) or the
@@ -345,7 +362,7 @@ def _hanko_user(request: Request) -> dict:
     except Exception:
         pass
     allowed = [x.strip().lower() for x in settings.SKYMON_REVIEWERS.split(",") if x.strip()]
-    if allowed and email.lower() not in allowed:
+    if reviewer and allowed and email.lower() not in allowed:
         raise HTTPException(status_code=403, detail="not a reviewer")
     return dict(id=uid, email=email)
 
@@ -374,3 +391,128 @@ def review(eid: str, request: Request, verdict: str = Body(..., pattern="^(frb|r
         except Exception:
             continue
     raise HTTPException(status_code=503, detail="the combiner did not answer")
+
+
+# ---------------------------------------------------------------- the catalogue
+_cat_engine = None
+
+
+def _catalogue():
+    """The engine for the catalogue: the website's database, or SKYMON_CATALOGUE_DSN"""
+    global _cat_engine
+    if _cat_engine is None:
+        dsn = settings.SKYMON_CATALOGUE_DSN.strip()
+        if not dsn:
+            from app.core.db import engine
+            _cat_engine = engine
+        else:
+            from sqlalchemy import create_engine
+            if "://" not in dsn:  # a libpq DSN
+                import psycopg2
+                _cat_engine = create_engine("postgresql+psycopg2://", creator=lambda: psycopg2.connect(dsn),
+                                            pool_pre_ping=True)
+            else:
+                _cat_engine = create_engine(dsn, pool_pre_ping=True)
+    return _cat_engine
+
+
+def _lock_until(t_inf) -> float:
+    return t_inf.timestamp() + settings.SKYMON_LOCK_DAYS * 86400
+
+
+def _archived(path: str) -> bool:
+    """Is the candidate's data in the archive (its .npz)?"""
+    try:
+        return os.path.exists(os.path.join(settings.SKYMON_ARCHIVE_ROOT, path + ".npz"))
+    except OSError:
+        return False
+
+
+def _detection(r) -> dict:
+    rec = r.record or {}
+    return dict(node=r.node, id=r.cand_id, kind=r.kind, event_id=r.event_id, state=r.state, pulsar=r.pulsar,
+                t_inf=r.t_inf.timestamp(), f_lo_mhz=r.f_lo_mhz, f_hi_mhz=r.f_hi_mhz, snr=r.snr, dm=r.dm,
+                width_s=r.width_s, fluence_jy_ms=r.fluence_jy_ms, ra=r.ra, dec=r.dec,
+                el=rec.get("el"), tier=rec.get("tier"), duplicates=rec.get("duplicates"),
+                dm_arms=len(rec.get("dm_arms") or []),
+                available_from=_lock_until(r.t_inf), archived=_archived(r.archive_path))
+
+
+@router.get("/catalogue")
+def catalogue(kind: str = Query("frb", pattern="^(frb|giant_pulse)$"),
+              since_days: float = Query(30.0, gt=0, le=3650),
+              status: str | None = Query(None, pattern="^(confirmed|band_limited|implausible|unconfirmable|pending)$"),
+              review: str | None = Query(None, pattern="^(pending|frb|rfi|unclear)$"),
+              limit: int = Query(200, ge=1, le=2000), offset: int = Query(0, ge=0)):
+    """
+    The catalogue, newest first. kind=frb: the FRB events, each with its detections
+    (one per band); kind=giant_pulse: the giant pulses. Each detection says whether
+    its data are archived and from when anyone may download them.
+    """
+    from sqlalchemy import text
+    since = time.time() - since_days * 86400
+    try:
+        with _catalogue().connect() as conn:
+            if kind == "giant_pulse":
+                n = conn.execute(text("SELECT count(*) FROM skymon.detections WHERE kind = 'giant_pulse' "
+                                      "AND t_inf >= to_timestamp(:s)"), dict(s=since)).scalar()
+                rows = conn.execute(text(
+                    "SELECT * FROM skymon.detections WHERE kind = 'giant_pulse' AND t_inf >= to_timestamp(:s) "
+                    "ORDER BY t_inf DESC LIMIT :l OFFSET :o"), dict(s=since, l=limit, o=offset)).fetchall()
+                return dict(count=n, rows=[_detection(r) for r in rows])
+            where = "t_inf >= to_timestamp(:s)"
+            args = dict(s=since, l=limit, o=offset)
+            if status:
+                where += " AND status = :st"
+                args["st"] = status
+            if review:
+                where += " AND review = :rv"
+                args["rv"] = review
+            n = conn.execute(text(f"SELECT count(*) FROM skymon.events WHERE {where}"), args).scalar()
+            evs = conn.execute(text(
+                f"SELECT id, status, review, t_inf, ra, dec, dm, dm_err, snr, n_seen, n_could_see, "
+                f"record->'reviews' AS reviews, record->'spectrum' AS spectrum, record->'disturbed' AS disturbed "
+                f"FROM skymon.events WHERE {where} ORDER BY t_inf DESC LIMIT :l OFFSET :o"), args).fetchall()
+            ids = [e.id for e in evs]
+            dets = conn.execute(text("SELECT * FROM skymon.detections WHERE event_id = ANY(:ids) "
+                                     "ORDER BY f_lo_mhz"), dict(ids=ids)).fetchall() if ids else []
+    except Exception as e:
+        raise HTTPException(status_code=503, detail="the catalogue is not available") from e
+    by = {}
+    for d in dets:
+        by.setdefault(d.event_id, []).append(_detection(d))
+    out = []
+    for e in evs:
+        out.append(dict(id=e.id, status=e.status, review=e.review, t_inf=e.t_inf.timestamp(), ra=e.ra, dec=e.dec,
+                        dm=e.dm, dm_err=e.dm_err, snr=e.snr, n_seen=e.n_seen, n_could_see=e.n_could_see,
+                        reviews=e.reviews or [], spectrum=e.spectrum, disturbed=bool(e.disturbed),
+                        available_from=_lock_until(e.t_inf), detections=by.get(e.id, [])))
+    return dict(count=n, rows=out)
+
+
+@router.get("/catalogue/data/{node}/{cand_id}.{ext}")
+def catalogue_data(node: str, cand_id: str, ext: str, request: Request):
+    """
+    A catalogued detection's archived data (.npz) or record (.json). Anyone may
+    download it SKYMON_LOCK_DAYS after detection; a logged-in team member at once.
+    """
+    from fastapi.responses import FileResponse
+    from sqlalchemy import text
+    if ext not in ("npz", "json"):
+        raise HTTPException(status_code=404, detail="unknown file")
+    try:
+        with _catalogue().connect() as conn:
+            r = conn.execute(text("SELECT t_inf, archive_path FROM skymon.detections "
+                                  "WHERE node = :n AND cand_id = :c"), dict(n=node, c=cand_id)).first()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail="the catalogue is not available") from e
+    if r is None:
+        raise HTTPException(status_code=404, detail="not in the catalogue")
+    if time.time() < _lock_until(r.t_inf):
+        _hanko_user(request, reviewer=False)  # raises 401 without a valid session
+    root = os.path.realpath(settings.SKYMON_ARCHIVE_ROOT)
+    path = os.path.realpath(os.path.join(root, r.archive_path + "." + ext))
+    if not path.startswith(root + os.sep) or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="not archived yet")
+    return FileResponse(path, filename=os.path.basename(path),
+                        media_type="application/octet-stream" if ext == "npz" else "application/json")
