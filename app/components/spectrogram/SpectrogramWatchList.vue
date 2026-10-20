@@ -55,6 +55,8 @@ const defaultWatchList: WatchList = { data: [], count: 0 }
 // Pagination
 const page = ref(1)
 const rowsPerPage = ref(10)
+// rows that share the height left in the window, so the pager stays in view
+const { tableBox, footerBox, rowPx, fitRows } = useFitRows(rowsPerPage)
 const availrowsPerPage = [5, 10, 25]
 const pageTotal = computed(() => watchlist.value.count)
 const pageFrom = computed(() => Math.min((page.value - 1) * rowsPerPage.value + 1, pageTotal.value))
@@ -100,7 +102,7 @@ watch(error, (newError) => {
 
 // The table shows the selected source as selected however it was chosen,
 // including from the page's address, and turns to its page if needed
-const tableMeta = { class: { tr: (row: { original: WatchListItem }) => 'cursor-pointer ' + (row.original.id == watchSource.value?.id ? selectedRowClass : '') } }
+const tableMeta = { class: { tr: (row: { original: WatchListItem }) => 'cursor-pointer h-(--row-h) ' + (row.original.id == watchSource.value?.id ? selectedRowClass : '') } }
 let seeking = false
 watch([watchSource, () => watchlist.value.data, pending], async ([sel]) => {
   if (!sel || seeking || pending.value || (watchlist.value.data ?? []).some((r: WatchListItem) => r.id == sel.id)) return
@@ -113,6 +115,8 @@ watch([watchSource, () => watchlist.value.data, pending], async ([sel]) => {
     }
   } finally { seeking = false }
 })
+
+watch(() => watchlist.value.data, () => nextTick(fitRows))
 
 const tableData = computed(() => {
   return watchlist.value.data ? watchlist.value.data : []
@@ -142,8 +146,10 @@ const tableData = computed(() => {
         <UButton icon="i-heroicons-view-columns" color="neutral" variant="outline" size="xs" class="w-40" label="Columns" />
       </UDropdownMenu>
     </div>
+    <div ref="tableBox">
     <UTable :data="tableData" :columns="columnsTable" :loading="pending" loading-color="primary" loading-animation="carousel"
-      :meta="tableMeta" class="my-0" @select="(_e: Event, row: { original: WatchListItem }) => rowSelect(row.original)">
+      :meta="tableMeta" :ui="{ th: 'px-4 py-3', td: 'px-4 py-2' }" :style="{ '--row-h': `${rowPx}px` }" class="my-0"
+      @select="(_e: Event, row: { original: WatchListItem }) => rowSelect(row.original)">
 
       <template #origin-cell="{ row }">
         <UBadge variant="soft" size="md" :color="row.original.origin == 'chime' ? 'info' : 'neutral'"
@@ -166,9 +172,10 @@ const tableData = computed(() => {
         {{ row.original.watch_status == 'watching' && row.original.watch_mode == 'continuous' ? '' : `${tz.dateTime(row.original.t_end)} ${tz.zoneName(row.original.t_end)}` }}
       </template>
     </UTable>
+    </div>
 
     <template #footer>
-      <div class="flex justify-between flex-wrap items-center">
+      <div ref="footerBox" class="flex justify-between flex-wrap items-center">
         <div>
           <span class="text-sm leading-5">
             Showing

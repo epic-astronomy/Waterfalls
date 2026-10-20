@@ -87,30 +87,12 @@ function rowSelect(row: ImgSessionItem) {
   selectedSession.value = row
 }
 
-// Rows share the height left in the window, so a page of rows fills it
-// without scrolling; never below the compact height of 37 px
-const ROW_MIN_PX = 37, ROW_MAX_PX = 80
-const tableBox = ref<HTMLElement>()
-const footerBox = ref<HTMLElement>()
-const rowPx = ref(ROW_MIN_PX)
-function fitRows() {
-  const el = tableBox.value
-  if (!el || !el.offsetParent) return
-  const body = el.querySelector('tbody')
-  if (!body) return
-  const scroller = el.closest('.overflow-y-auto')
-  const viewBottom = scroller ? scroller.getBoundingClientRect().bottom : window.innerHeight
-  const footer = (footerBox.value?.offsetHeight ?? 40) + 32 // the card footer and its padding
-  const space = viewBottom - body.getBoundingClientRect().top - footer - 24 + (scroller?.scrollTop ?? 0)
-  rowPx.value = Math.max(ROW_MIN_PX, Math.min(ROW_MAX_PX, Math.floor(space / rowsPerPage.value)))
-}
-const fitObserver = import.meta.client ? new ResizeObserver(() => fitRows()) : null
-watch(tableBox, (el, old) => { if (old) fitObserver?.unobserve(old); if (el) fitObserver?.observe(el) })
-onMounted(() => window.addEventListener('resize', fitRows))
-onBeforeUnmount(() => { window.removeEventListener('resize', fitRows); fitObserver?.disconnect() })
+
 
 const page = ref(1)
 const rowsPerPage = ref(10)
+// rows that share the height left in the window, so the pager stays in view
+const { tableBox, footerBox, rowPx, fitRows } = useFitRows(rowsPerPage)
 const availrowsPerPage = [5, 10, 25]
 const defaultImsSession: ImgSessions = { data: [], count: 0 }
 const pageTotal = computed(() => imgSession.value.count)

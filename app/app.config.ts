@@ -19,6 +19,10 @@ export default defineAppConfig({
     // the heroes' height as before (UI 4 pads them up to py-40, pushing the cards down)
     pageHero: {
       slots: { container: 'py-16 sm:py-20 lg:py-20' }
+    },
+    // the page body close under the toolbar (UI 4 pads it 24 px on top)
+    dashboardPanel: {
+      slots: { body: 'pt-2 sm:pt-2' }
     }
   }
 })
