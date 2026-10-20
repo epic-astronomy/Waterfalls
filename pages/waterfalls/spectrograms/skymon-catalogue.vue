@@ -144,9 +144,9 @@ useSeoMeta({
                   <UIcon :name="expanded == e.id ? 'i-heroicons-chevron-down-20-solid' : 'i-heroicons-chevron-right-20-solid'" class="w-4 h-4 align-middle" />
                   {{ tz.dateTime(e.t_inf * 1000) }}
                 </td>
-                <td :class="td"><UBadge :color="statusColor[e.status] ?? 'gray'" variant="soft" size="xs" :label="statusLabel[e.status] ?? e.status" /></td>
+                <td :class="td"><UBadge :color="statusColor[e.status] ?? 'gray'" variant="soft" size="xs" :label="statusLabel[e.status] ?? e.status" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" /></td>
                 <td :class="td">
-                  <UBadge v-if="e.review" :color="e.review == 'pending' ? 'orange' : e.review == 'frb' ? 'green' : 'gray'" variant="outline" size="xs" :label="reviewLabel[e.review] ?? e.review" />
+                  <UBadge v-if="e.review" :color="e.review == 'pending' ? 'orange' : e.review == 'frb' ? 'green' : 'gray'" variant="outline" size="xs" :label="reviewLabel[e.review] ?? e.review" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" />
                 </td>
                 <td :class="[td, 'text-right tabular-nums']">{{ e.dm != null ? `${e.dm.toFixed(1)} ± ${fmt(e.dm_err)}` : '' }}</td>
                 <td :class="[td, 'text-right tabular-nums']">{{ fmt(e.snr) }}</td>

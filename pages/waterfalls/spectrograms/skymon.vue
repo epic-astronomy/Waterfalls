@@ -87,7 +87,7 @@ const shownEvents = computed(() => events.value.filter(e =>
   (showReviewed.value || e.review == 'pending' || e.kind == 'terrestrial')))
 const evLabel: Record<string, string> = {
   pending: 'Pending', confirmed: 'Confirmed', band_limited: 'One band, plausible spectrum',
-  implausible: 'One band, implausible spectrum', unconfirmable: 'Not checkable', single_band: 'One band',
+  implausible: 'One band, implausible spectrum', unconfirmable: 'Single band only', single_band: 'One band',
   terrestrial: 'Terrestrial, in several bands at once'
 }
 const evColor: Record<string, string> = {
@@ -536,13 +536,16 @@ useSeoMeta({
                             <UIcon :name="expanded == e.id ? 'i-heroicons-chevron-down-20-solid' : 'i-heroicons-chevron-right-20-solid'" class="w-4 h-4 align-middle text-gray-400" />
                             {{ tz.dateTime(e.t_inf * 1000) }}
                           </td>
-                          <td class="px-2 py-1 whitespace-nowrap">
-                            <UBadge :color="evColor[e.status]" variant="subtle" size="xs" :label="evLabel[e.status] ?? e.status" />
-                            <UBadge v-if="e.kind == 'injection'" color="sky" variant="outline" size="xs" label="Test injection" class="ml-1" />
+                          <td class="px-2 py-1">
+                            <!-- small badges, wrapping in a narrow column: taller rows, a narrower table -->
+                            <div class="flex flex-wrap gap-0.5 max-w-[8.5rem]">
+                            <UBadge :color="evColor[e.status]" variant="subtle" size="xs" :label="evLabel[e.status] ?? e.status" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" />
+                            <UBadge v-if="e.kind == 'injection'" color="sky" variant="outline" size="xs" label="Test injection" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" />
                             <UBadge v-if="reviewLabel[e.review ?? '']" :color="e.review == 'pending' ? 'orange' : 'gray'" variant="outline" size="xs"
-                              :label="reviewLabel[e.review ?? '']" class="ml-1" />
-                            <UBadge v-if="e.disturbed" color="orange" variant="outline" size="xs" label="Band disturbed" class="ml-1" />
-                            <UBadge v-if="e.other_dm?.length" color="violet" variant="outline" size="xs" label="Other DMs here" class="ml-1" />
+                              :label="reviewLabel[e.review ?? '']" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" />
+                            <UBadge v-if="e.disturbed" color="orange" variant="outline" size="xs" label="Band disturbed" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" />
+                            <UBadge v-if="e.other_dm?.length" color="violet" variant="outline" size="xs" label="Other DMs here" class="!text-[10px] !px-1 !py-0 leading-4 whitespace-nowrap" />
+                                                      </div>
                           </td>
                           <td class="px-2 py-1 text-right tabular-nums whitespace-nowrap">{{ e.dm != null ? `${e.dm.toFixed(1)} ± ${(e.dm_err ?? 0).toFixed(1)}` : '' }}</td>
                           <td class="px-2 py-1 text-right tabular-nums">{{ e.combined_snr != null ? e.combined_snr.toFixed(1) : '' }}</td>
