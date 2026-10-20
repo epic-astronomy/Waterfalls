@@ -15,6 +15,10 @@ export default defineAppConfig({
     },
     card: {
       slots: { root: 'rounded-md' }
+    },
+    // the heroes' height as before (UI 4 pads them up to py-40, pushing the cards down)
+    pageHero: {
+      slots: { container: 'py-16 sm:py-20 lg:py-20' }
     }
   }
 })

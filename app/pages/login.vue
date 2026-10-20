@@ -5,11 +5,6 @@ definePageMeta({
   middleware: ['hanko-logged-out']
 })
 useSeoMeta({ title: 'Sign in', robots: 'noindex, nofollow' })
-
-const auth = useAuth()
-async function signedIn() {
-  await auth.refresh()
-}
 </script>
 
 <template>
@@ -22,7 +17,6 @@ async function signedIn() {
             For invited members of the EPIC team. A code is sent to your email address; no password is needed.
           </p>
         </template>
-        <hanko-events @on-session-created="signedIn" />
         <!-- sign-in only: sign-up is closed, so its link is left out -->
         <hanko-login class="hanko-theme" />
       </UCard>
