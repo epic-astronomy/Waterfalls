@@ -38,6 +38,10 @@ let times: number[] = []  // of rows (unix s)
 // Live: the monitor keeps only its latest search window (about 30 s), so the windows
 // are joined here as they come, for up to LIVE_SPAN_S while the pixel is shown
 const LIVE_SPAN_S = 600
+// the part of it shown
+const liveSpan = useState('skymon-live-span', () => 60)
+const liveSpans = [{ label: 'last 30 s', value: 30 }, { label: 'last 1 min', value: 60 }, { label: 'last 2 min', value: 120 },
+  { label: 'last 5 min', value: 300 }, { label: 'last 10 min', value: 600 }]
 let liveT: number[] = []
 let liveRows: Float32Array[] = []
 function resetLive() { liveT = []; liveRows = [] }
@@ -178,13 +182,39 @@ function draw() {
   const m = rfiOn.value ? rfiMask.value : null
   if (m) z.forEach((row, c) => { const mk = m[c]; if (mk) for (let t = 0; t < row.length; t++) if (!mk[t]) row[t] = NaN })
   if (normOn.value) z.forEach(normaliseChannel)
-  // the rows shown: the joined live windows, or the averages as they came
-  const x = times.map(t => tz.plotTime(t * 1000))
+  // the rows shown: the joined live windows (the last liveSpan of them), or the averages
+  let zs = z, ts = times
+  if (resolution.value == 'live' && ts.length) {
+    const t0 = ts[ts.length - 1] - liveSpan.value
+    const k = Math.max(0, ts.findIndex(t => t >= t0))
+    zs = zs.map(r => r.subarray(k)); ts = ts.slice(k)
+  }
+  // cells kept about as wide as they are tall: neighbouring samples averaged when
+  // the span holds more of them than the plot has room for at that width
+  const plotW = Math.max(200, el.clientWidth - 90), plotH = 450 - 100
+  const cols = Math.max(1, Math.floor(plotW / Math.max(1, plotH / Math.max(1, zs.length))))
+  const bin = Math.ceil(ts.length / cols)
+  if (bin > 1) {
+    const n = Math.floor(ts.length / bin)
+    zs = zs.map(r => {
+      const o = new Float32Array(n)
+      for (let i = 0; i < n; i++) {
+        let s = 0, m = 0
+        for (let j = i * bin; j < (i + 1) * bin; j++) { const v = r[j]; if (v === v) { s += v; m++ } }
+        // the mean of the samples, scaled so noise keeps its spread on the colour scale
+        o[i] = m ? s / Math.sqrt(m) : NaN
+      }
+      return o
+    })
+    ts = Array.from({ length: n }, (_, i) => ts[i * bin])
+  }
+  const z2 = zs
+  const x = ts.map(t => tz.plotTime(t * 1000))
   const y = b.freqs_mhz ?? []
   const df = y.length > 1 ? y[1] - y[0] : 0
   const fc = y.length ? (y[0] + y[y.length - 1]) / 2 : 0
   const traces: any[] = [{
-    z, x, y, type: 'heatmap', hoverongaps: false, ...robustRange(z), showscale: false,
+    z: z2, x, y, type: 'heatmap', hoverongaps: false, ...robustRange(z2), showscale: false,
     colorscale: 'Viridis', zsmooth: 'fast'
   }]
   if (showDispersion.value && props.tInf != null && props.dm != null && y.length && times.length > 1) {
@@ -236,7 +266,7 @@ function schedule() {
 watch(() => [props.node, props.ra, props.dec, props.hpix], () => { band.value = null; rows = []; resetLive(); draw(); load() })
 watch([resolution, hours], () => { band.value = null; rows = []; resetLive(); draw(); load(); schedule() })
 watch(autoOn, schedule)
-watch([normOn, colorMode, () => tz.mode.value, showDispersion, () => props.tInf, () => props.dm], () => draw())
+watch([normOn, liveSpan, colorMode, () => tz.mode.value, showDispersion, () => props.tInf, () => props.dm], () => draw())
 watch(rfiOn, on => { if (on && !rfiMask.value) requestRfi(); else draw() })
 let ro: ResizeObserver | undefined
 onMounted(() => {
@@ -262,6 +292,7 @@ onBeforeUnmount(() => {
         <UIcon v-show="rfiOn && rfiPending" name="i-heroicons-arrow-path-20-solid" class="w-4 h-4 animate-spin text-gray-500" />
         <span v-show="rfiOn && !rfiPending && rfiFlagged !== null" class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ rfiFlagged?.toFixed(1) }}%</span>
       </div>
+      <USelect v-if="resolution == 'live'" v-model="liveSpan" size="xs" :options="liveSpans" />
       <UCheckbox v-model="autoOn" label="Update" />
       <span v-if="hasData" class="ml-auto text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         RA {{ (band?.ra ?? ra).toFixed(2) }}°, Dec {{ (band?.dec ?? dec).toFixed(2) }}°, el {{ band?.el?.toFixed(0) }}°
