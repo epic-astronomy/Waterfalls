@@ -333,45 +333,11 @@ def combiner_status():
     return dict(up=st is not None, **(st or {}))
 
 
-def _hanko_user(request: Request, reviewer: bool = True) -> dict:
-    """
-    The logged-in user, checked with the Hanko API itself: the session token
-    from the hanko cookie (sent with every request to this origin) or the
-    Authorization header is passed to GET /me, which only answers for a valid
-    session. Raises 401 otherwise.
-    """
-    api = settings.NUXT_PUBLIC_HANKO_API_URL.rstrip("/")
-    token = request.cookies.get("hanko") or \
-        request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-    if not api or not token:
-        raise HTTPException(status_code=401, detail="log in to review")
-    hdr = {"Authorization": f"Bearer {token}"}
-    try:
-        with urllib.request.urlopen(urllib.request.Request(f"{api}/me", headers=hdr),
-                                    timeout=5) as r:
-            uid = json.loads(r.read())["id"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="log in to review")
-    email = ""
-    try:
-        with urllib.request.urlopen(urllib.request.Request(f"{api}/users/{uid}", headers=hdr),
-                                    timeout=5) as r:
-            u = json.loads(r.read())
-        email = next((e["address"] for e in u.get("emails", []) if e.get("is_primary")),
-                     (u.get("emails") or [{}])[0].get("address", ""))
-    except Exception:
-        pass
-    allowed = [x.strip().lower() for x in settings.SKYMON_REVIEWERS.split(",") if x.strip()]
-    if reviewer and allowed and email.lower() not in allowed:
-        raise HTTPException(status_code=403, detail="not a reviewer")
-    return dict(id=uid, email=email)
-
-
 @router.post("/events/{eid}/review")
 def review(eid: str, request: Request, verdict: str = Body(..., pattern="^(frb|rfi|unclear)$"),
            note: str = Body("", max_length=2000)):
-    """Record a logged-in reviewer's verdict on a combiner event"""
-    user = _hanko_user(request)
+    """Record an admin's verdict on a combiner event (every route here needs an admin, see api/main.py)"""
+    user = request.state.user
     body = json.dumps(dict(verdict=verdict, note=note,
                            by=user["email"] or user["id"])).encode()
     hdr = {"Content-Type": "application/json"}
@@ -493,8 +459,10 @@ def catalogue(kind: str = Query("frb", pattern="^(frb|giant_pulse)$"),
 @router.get("/catalogue/data/{node}/{cand_id}.{ext}")
 def catalogue_data(node: str, cand_id: str, ext: str, request: Request):
     """
-    A catalogued detection's archived data (.npz) or record (.json). Anyone may
-    download it SKYMON_LOCK_DAYS after detection; a logged-in team member at once.
+    A catalogued detection's archived data (.npz) or record (.json), for admins
+    (like every route here). available_from in the listings marks when it would
+    open to the public, SKYMON_LOCK_DAYS after detection, if the catalogue is
+    made public.
     """
     from fastapi.responses import FileResponse
     from sqlalchemy import text
@@ -508,8 +476,6 @@ def catalogue_data(node: str, cand_id: str, ext: str, request: Request):
         raise HTTPException(status_code=503, detail="the catalogue is not available") from e
     if r is None:
         raise HTTPException(status_code=404, detail="not in the catalogue")
-    if time.time() < _lock_until(r.t_inf):
-        _hanko_user(request, reviewer=False)  # raises 401 without a valid session
     root = os.path.realpath(settings.SKYMON_ARCHIVE_ROOT)
     path = os.path.realpath(os.path.join(root, r.archive_path + "." + ext))
     if not path.startswith(root + os.sep) or not os.path.exists(path):

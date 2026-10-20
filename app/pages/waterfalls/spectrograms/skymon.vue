@@ -1,4 +1,5 @@
 <script setup lang="ts">
+definePageMeta({ middleware: 'admin' })
 // All-sky monitor: every imaging worker searches its own band of the whole
 // visible sky for dispersed bursts. This page shows the state of each
 // monitor, the candidates they found, and the spectrogram of any position.
@@ -97,8 +98,8 @@ const reviewLabel: Record<string, string> = { pending: 'Needs review', frb: 'FRB
 const showReviewed = ref(true)
 
 // review verdicts, for logged-in users; the server checks the session with Hanko
-const hanko = useHanko()
-const canReview = ref(false)
+// the page is for admins only (middleware admin), and admins review
+const canReview = useAuth().isAdmin
 const reviewNote = ref('')
 const reviewMsg = ref('')
 async function submitReview(e: Ev, verdict: string) {
@@ -367,7 +368,6 @@ let timer: ReturnType<typeof setInterval> | undefined
 let nodeTimer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   tz.restore()
-  hanko?.validateSession().then(r => { canReview.value = r.is_valid }).catch(() => { canReview.value = false })
   loadNodes()
   loadCands()
   loadEvents()

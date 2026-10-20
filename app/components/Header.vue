@@ -27,7 +27,7 @@ const links = computed<NavigationMenuItem[]>(() => [{
     <UNavigationMenu :items="links" variant="link" />
 
     <template #right>
-      <!-- <UserMngmnt /> -->
+      <UserMenu />
     </template>
 
     <template #body>

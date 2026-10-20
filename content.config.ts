@@ -18,6 +18,8 @@ const card = z.object({
   to: z.string(),
   target: z.string().optional(),
   external: z.boolean().optional(),
+  // shown to signed-in admins only
+  admin: z.boolean().optional(),
   class: z.string().optional()
 })
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+definePageMeta({ middleware: 'admin' })
 // The catalogue of the all-sky monitor: every FRB event, each opening into its
 // detections in the bands, and every giant pulse, from the head database. The
 // archived data of each detection can be downloaded by anyone 30 days after
@@ -68,8 +69,8 @@ const events = computed(() => kind.value == 'frb' ? rows.value as Ev[] : [])
 const pulses = computed(() => kind.value == 'giant_pulse' ? rows.value as Det[] : [])
 
 // downloads: open to all after the lock, to a logged-in team member at once (the server checks)
-const hanko = useHanko()
-const loggedIn = ref(false)
+// the page is for admins only (middleware admin), who may download at once
+const loggedIn = useAuth().signedIn
 const now = ref(Date.now() / 1000)
 const canDownload = (d: Det) => now.value >= d.available_from || loggedIn.value
 const dataUrl = (d: Det, ext: string) => `${rtConfig.public.fastapiBase}/skymon/catalogue/data/${encodeURIComponent(d.node)}/${encodeURIComponent(d.id)}.${ext}`
@@ -98,7 +99,6 @@ const td = 'whitespace-nowrap px-4 py-3 text-gray-500 dark:text-gray-400 text-sm
 
 onMounted(() => {
   tz.restore()
-  hanko?.validateSession().then(r => { loggedIn.value = r.is_valid }).catch(() => { loggedIn.value = false })
   load()
 })
 

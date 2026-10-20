@@ -103,11 +103,16 @@ class Settings(BaseSettings):
     # the combiner runs on one worker at a time; whichever answers is used
     SKYMON_COMBINER_URLS: str = ",".join(f"http://epic{i}:8096" for i in range(1, 7))
     SKYMON_TIMEOUT_S: float = 2.0
-    # review verdicts: sent to the combiner with this token (its SKYMON_TOKEN),
-    # only for a valid Hanko session, and only from these e-mail addresses if set
+    # review verdicts (admins only): sent to the combiner with this token (its SKYMON_TOKEN)
     SKYMON_TOKEN: str = Field('', validate_default=False)
-    SKYMON_REVIEWERS: str = Field('', validate_default=False)
     NUXT_PUBLIC_HANKO_API_URL: str = Field('', validate_default=False)
+    # Hanko on the same host, reached directly rather than through nginx: the
+    # public API checks sessions, the admin API (never exposed) gives each user's
+    # role (private metadata "role": admin or member) and manages the invitations
+    HANKO_INTERNAL_URL: str = "http://127.0.0.1:8110"
+    HANKO_ADMIN_URL: str = "http://127.0.0.1:8111"
+    # where invitation emails send people to sign in
+    WEBSITE_LOGIN_URL: str = "https://epic-astronomy.org/login"
     SKYMON_PIXEL_TIMEOUT_S: float = 10.0
     # the catalogue (schema skymon, written by the combiner): in the website's own
     # database unless this names another (a libpq DSN or an SQLAlchemy URL)

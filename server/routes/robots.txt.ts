@@ -5,6 +5,9 @@ export default defineEventHandler((event) => {
     'User-agent: *',
     'Allow: /',
     'Disallow: /api/',
+    'Disallow: /waterfalls/admin/',
+    'Disallow: /login',
+    'Disallow: /profile',
     '',
     `Sitemap: ${siteUrl}/sitemap.xml`,
     ''

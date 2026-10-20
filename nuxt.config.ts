@@ -30,7 +30,9 @@ export default defineNuxtConfig({
   },
   // set at run time by NUXT_PUBLIC_HANKO_API_URL
   hanko: {
-    apiURL: ''
+    apiURL: '',
+    // after signing in: back to the page that asked (?redirect=), else the Waterfalls
+    redirects: { login: '/login', success: '/waterfalls', home: '/waterfalls', followRedirect: true }
   },
   icon: {
     // the icon sets are bundled with the server, so no icon is fetched from the Iconify API

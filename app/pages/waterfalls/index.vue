@@ -8,6 +8,10 @@ if (!page.value) {
   throw createError({ statusCode: 404, statusMessage: 'Page not found', fatal: true })
 }
 
+// cards marked admin (the all-sky monitor and its catalogue) for signed-in admins only
+const auth = useAuth()
+const cards = computed(() => (page.value?.cards ?? []).filter(c => !c.admin || auth.isAdmin.value))
+
 useSeoMeta({
   title: page.value.title,
   ogTitle: page.value.title,
@@ -22,7 +26,7 @@ useSeoMeta({
       <UContainer>
         <UPageHero :title="page.hero.title" :description="page.hero.description" />
         <UPageGrid class="pb-12">
-          <UPageCard v-for="(module, index) in page.cards" :key="index" :title="module.title" :to="module.to"
+          <UPageCard v-for="(module, index) in cards" :key="index" :title="module.title" :to="module.to"
             :target="module.target" spotlight>
             <template #description>
               <span class="line-clamp-2">{{ module.description }}</span>

@@ -8,9 +8,7 @@ const staticPaths = [
   '/waterfalls/spectrograms',
   '/waterfalls/spectrograms/lwasv',
   '/waterfalls/spectrograms/dailydigest',
-  '/waterfalls/spectrograms/frb',
-  '/waterfalls/spectrograms/skymon',
-  '/waterfalls/spectrograms/skymon-catalogue'
+  '/waterfalls/spectrograms/frb'
 ]
 
 export default defineEventHandler(async (event) => {

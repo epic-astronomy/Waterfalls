@@ -2,8 +2,10 @@
 import type { NavigationMenuItem } from '@nuxt/ui'
 
 const { isHelpSlideoverOpen, isSidebarHidden, toggleSidebar } = useDashboard()
+const auth = useAuth()
 
-const links: NavigationMenuItem[] = [{
+// the all-sky monitor, its catalogue and the user list are shown to admins only
+const links = computed<NavigationMenuItem[]>(() => [{
   label: 'Home',
   icon: 'i-heroicons-home',
   to: '/waterfalls',
@@ -26,15 +28,19 @@ const links: NavigationMenuItem[] = [{
   }, {
     label: 'FRB events',
     to: '/waterfalls/spectrograms/frb'
-  }, {
+  }, ...(auth.isAdmin.value ? [{
     label: 'All-sky monitor',
     to: '/waterfalls/spectrograms/skymon',
     exact: true
   }, {
     label: 'All-sky catalogue',
     to: '/waterfalls/spectrograms/skymon-catalogue'
-  }]
-}]
+  }] : [])]
+}, ...(auth.isAdmin.value ? [{
+  label: 'Users',
+  icon: 'i-heroicons-users',
+  to: '/waterfalls/admin/users'
+}] : [])])
 
 const footerLinks: NavigationMenuItem[] = [{
   label: 'Help & Support',
@@ -42,11 +48,11 @@ const footerLinks: NavigationMenuItem[] = [{
   onSelect: () => { isHelpSlideoverOpen.value = true }
 }]
 
-const groups = [{
+const groups = computed(() => [{
   id: 'links',
   label: 'Go to',
-  items: links.flatMap(link => [link, ...(link.children ?? [])]).map(l => ({ label: l.label, icon: l.icon, to: l.to }))
-}]
+  items: links.value.flatMap(link => [link, ...(link.children ?? [])]).map(l => ({ label: l.label, icon: l.icon, to: l.to }))
+}])
 </script>
 
 <template>
@@ -72,7 +78,10 @@ const groups = [{
       <UColorModeSelect class="w-full" />
 
       <template #footer>
-        <UNavigationMenu :items="footerLinks" orientation="vertical" class="w-full" />
+        <div class="flex flex-col w-full gap-1">
+          <UNavigationMenu :items="footerLinks" orientation="vertical" class="w-full" />
+          <UserMenu block />
+        </div>
       </template>
     </UDashboardSidebar>
 
