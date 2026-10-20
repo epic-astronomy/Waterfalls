@@ -1,50 +1,58 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+  compatibilityDate: '2026-10-01',
   devtools: { enabled: true },
-  extends: ['@nuxt/ui-pro'],
   modules: [
     '@nuxt/ui',
-    '@nuxtjs/color-mode',
     '@nuxt/content',
-    'nuxt-icon',
-    'nuxt-og-image',
-    "@nuxtjs/hanko"
+    '@nuxtjs/hanko'
   ],
-  colorMode: {
-    preference: 'dark',
-  },
-  css: ['katex/dist/katex.min.css', '~/assets/css/epic-figures.css'],
-  content: {
-    markdown: {
-      // LaTeX math in the docs: $inline$ and $$display$$
-      remarkPlugins: ['remark-math'],
-      rehypePlugins: { 'rehype-katex': { output: 'html' } }
+  ui: {
+    theme: {
+      // notice: the orange of the skymon review and watch states
+      colors: ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'notice']
     }
   },
-  hanko: {
-    apiURL: process.env.NUXT_PUBLIC_HANKO_API_URL
+  colorMode: {
+    preference: 'dark'
   },
-  ui: {
-    icons: ['heroicons', 'simple-icons', 'material-symbols']
+  css: ['~/assets/css/main.css', 'katex/dist/katex.min.css', '~/assets/css/epic-figures.css'],
+  content: {
+    // Node's own SQLite (22.13 and later), so no native module is built
+    experimental: { sqliteConnector: 'native' },
+    build: {
+      markdown: {
+        // LaTeX math in the docs: $inline$ and $$display$$
+        remarkPlugins: { 'remark-math': {} },
+        rehypePlugins: { 'rehype-katex': { output: 'html' } }
+      }
+    }
+  },
+  // set at run time by NUXT_PUBLIC_HANKO_API_URL
+  hanko: {
+    apiURL: ''
+  },
+  icon: {
+    // the icon sets are bundled with the server, so no icon is fetched from the Iconify API
+    serverBundle: { collections: ['heroicons', 'simple-icons', 'material-symbols', 'lucide'] }
   },
   routeRules: {
-    // Revalidate the docs search index on every use so a rebuild is picked up immediately
-    '/api/search.json': { prerender: true, headers: { 'cache-control': 'no-cache' } },
-    '/docs': { redirect: '/docs/introduction', prerender: false },
-    '/api/v1/**': { proxy: { to: `${process.env.WATERFALLS_API_ORIGIN || 'http://127.0.0.1:8000'}/api/v1/**` } }
+    '/docs': { redirect: '/docs/introduction', prerender: false }
   },
   runtimeConfig: {
+    // the FastAPI backend that /api/v1 is passed to (NUXT_API_ORIGIN)
+    apiOrigin: 'http://127.0.0.1:8000',
     // Public keys that are exposed to the client
     public: {
-      fastapiBase: process.env.NUXT_FAST_API_BASE || '/api/v1',
+      fastapiBase: '/api/v1',
       // Canonical origin used for canonical links, Open Graph URLs and the sitemap
-      siteUrl: process.env.NUXT_PUBLIC_SITE_URL || 'https://epic-astronomy.org'
+      siteUrl: 'https://epic-astronomy.org'
     }
   },
   vite: {
     optimizeDeps: {
-      include: ["plotly.js-dist-min"],
-    },
+      include: ['plotly.js-dist-min']
+    }
   },
   experimental: {
     componentIslands: true

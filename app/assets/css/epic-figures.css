@@ -1,0 +1,87 @@
+/*
+ * Figure skin for the EPIC documentation diagrams.
+ * Roles follow the diagram-design style guide (profile "epic-waterfalls");
+ * every color resolves to a Nuxt UI variable so figures follow the site's
+ * light/dark mode and primary/gray palette.
+ */
+.ef-figure {
+  --ef-paper: var(--ui-bg);
+  --ef-paper-2: var(--ui-color-neutral-50);
+  --ef-ink: var(--ui-color-neutral-900);
+  --ef-muted: var(--ui-color-neutral-600);
+  --ef-soft: var(--ui-color-neutral-500);
+  --ef-rule: var(--ui-color-neutral-200);
+  --ef-accent: var(--ui-color-primary-700);
+  --ef-accent-tint: color-mix(in oklab, var(--ui-color-primary-500) 8%, transparent);
+  --ef-input: color-mix(in oklab, var(--ui-color-neutral-500) 10%, transparent);
+  --ef-external: color-mix(in oklab, var(--ui-color-neutral-500) 4%, transparent);
+  --ef-link: rgb(29 78 216);
+  --ef-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --ef-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  margin: 2rem 0;
+}
+
+.dark .ef-figure {
+  --ef-paper-2: var(--ui-color-neutral-800);
+  --ef-ink: var(--ui-color-neutral-200);
+  --ef-muted: var(--ui-color-neutral-400);
+  --ef-soft: var(--ui-color-neutral-400);
+  --ef-rule: var(--ui-color-neutral-700);
+  --ef-accent: var(--ui-color-primary-400);
+  --ef-accent-tint: color-mix(in oklab, var(--ui-color-primary-400) 10%, transparent);
+  --ef-input: color-mix(in oklab, var(--ui-color-neutral-400) 10%, transparent);
+  --ef-external: color-mix(in oklab, var(--ui-color-neutral-400) 4%, transparent);
+  --ef-link: rgb(96 165 250);
+}
+
+/* Keep the drawing at its design width; scroll locally on narrow screens. */
+.ef-scroll { width: 100%; overflow-x: auto; }
+.ef-figure svg { display: block; width: 100%; min-width: 736px; margin: 0; }
+
+.ef-figure figcaption {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ef-muted);
+}
+.ef-figure figcaption strong { color: var(--ef-ink); font-weight: 600; }
+
+/* Ground and masks */
+.ef-bg, .ef-mask { fill: var(--ef-paper); }
+
+/* Node treatments */
+.ef-node { fill: var(--ef-paper); stroke: var(--ef-ink); stroke-width: 1; }
+.ef-node--input { fill: var(--ef-input); stroke: var(--ef-soft); }
+.ef-node--store { fill: var(--ef-paper-2); stroke: var(--ef-muted); }
+.ef-node--external { fill: var(--ef-external); stroke: var(--ef-soft); stroke-dasharray: 4 3; }
+.ef-node--focal { fill: var(--ef-accent-tint); stroke: var(--ef-accent); stroke-width: 1.2; }
+
+/* Type tags */
+.ef-tag { fill: none; stroke: var(--ef-soft); stroke-width: 0.8; }
+.ef-tag-text { fill: var(--ef-soft); font: 500 7px var(--ef-mono); letter-spacing: 0.08em; }
+.ef-tag--focal { stroke: var(--ef-accent); }
+.ef-tag-text--focal { fill: var(--ef-accent); }
+
+/* Text roles */
+.ef-name { fill: var(--ef-ink); font: 600 12px var(--ef-sans); }
+.ef-sub { fill: var(--ef-muted); font: 400 9px var(--ef-mono); }
+.ef-eyebrow { fill: var(--ef-soft); font: 500 7px var(--ef-mono); letter-spacing: 0.14em; }
+.ef-label { fill: var(--ef-soft); font: 400 8px var(--ef-mono); letter-spacing: 0.06em; }
+.ef-ledger { fill: var(--ef-muted); font: 400 8px var(--ef-mono); }
+.ef-ledger-key { fill: var(--ef-ink); font: 600 8px var(--ef-mono); letter-spacing: 0.06em; }
+.ef-badge { fill: var(--ef-soft); font: 600 10px var(--ef-sans); }
+
+/* Connectors */
+.ef-wire { fill: none; stroke: var(--ef-muted); stroke-width: 1.2; }
+.ef-wire--accent { stroke: var(--ef-accent); }
+.ef-wire--link { stroke: var(--ef-link); }
+.ef-wire--dash { stroke-dasharray: 5 4; stroke-width: 1; }
+.ef-head { fill: var(--ef-muted); }
+.ef-head--link { fill: var(--ef-link); }
+.ef-head--accent { fill: var(--ef-accent); }
+
+/* Zones and rules */
+.ef-region { fill: color-mix(in oklab, var(--ui-color-neutral-500) 3%, transparent); stroke: var(--ef-rule); stroke-width: 0.8; }
+.ef-zone { fill: var(--ef-accent-tint); stroke: var(--ef-accent); stroke-width: 0.8; stroke-dasharray: 4 4; }
+.ef-zone-label { fill: var(--ef-accent); font: 500 7px var(--ef-mono); letter-spacing: 0.14em; }
+.ef-hair { stroke: var(--ef-rule); stroke-width: 0.8; }

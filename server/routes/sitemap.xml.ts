@@ -1,4 +1,4 @@
-import { serverQueryContent } from '#content/server'
+import { queryCollection } from '@nuxt/content/server'
 
 // Application pages that are not backed by a content file
 const staticPaths = [
@@ -7,19 +7,17 @@ const staticPaths = [
   '/waterfalls',
   '/waterfalls/spectrograms',
   '/waterfalls/spectrograms/lwasv',
-  '/waterfalls/spectrograms/dailydigest'
+  '/waterfalls/spectrograms/dailydigest',
+  '/waterfalls/spectrograms/frb',
+  '/waterfalls/spectrograms/skymon',
+  '/waterfalls/spectrograms/skymon-catalogue'
 ]
 
 export default defineEventHandler(async (event) => {
   const { siteUrl } = useRuntimeConfig().public
 
-  const docs = await serverQueryContent(event)
-    .where({ _extension: 'md', _partial: false })
-    .only(['_path'])
-    .find()
-  const docPaths = docs
-    .map(d => d._path as string)
-    .filter(p => p.startsWith('/docs/'))
+  const docs = await queryCollection(event, 'docs').select('path').all()
+  const docPaths = docs.map(d => d.path).filter(p => p.startsWith('/docs/'))
 
   const paths = [...new Set([...staticPaths, ...docPaths])].sort()
   const urls = paths

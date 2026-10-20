@@ -1,0 +1,16 @@
+# the FastAPI backend, at the versions it ran with in the conda environment "waterfalls"
+fastapi==0.114.2
+starlette==0.38.2
+uvicorn==0.30.6
+sqlmodel==0.0.22
+SQLAlchemy==2.0.34
+psycopg2-binary==2.9.9
+pydantic==2.9.1
+pydantic-settings==2.5.2
+pydantic_core==2.23.3
+numpy==1.26.4
+slack_sdk==3.32.0
+python-dotenv==1.0.1
+email-validator==2.2.0
+python-multipart==0.0.9
+typing_extensions>=4.12
